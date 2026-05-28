@@ -29,6 +29,21 @@ type NodeSummary struct {
 	Total int32
 }
 
+type InferenceStatus struct {
+	Kind           string
+	Name           string
+	Namespace      string
+	Phase          string
+	Status         string
+	Ready          bool
+	APIEndpoint    string
+	ActiveExecutor string
+	LastError      string
+	Desired        int32
+	Current        int32
+	ReadyCount     int32
+}
+
 func ParseAppStatus(payload map[string]any) AppStatus {
 	status := AppStatus{
 		AppName:         str(payload["app_name"]),
@@ -59,6 +74,28 @@ func ParseAppStatus(payload map[string]any) AppStatus {
 	return status
 }
 
+func ParseInferenceStatus(payload map[string]any) InferenceStatus {
+	phase := firstStatus(str(payload["phase"]), str(payload["status"]))
+	status := InferenceStatus{
+		Kind:           str(payload["kind"]),
+		Name:           str(payload["name"]),
+		Namespace:      str(payload["namespace"]),
+		Phase:          phase,
+		Status:         str(payload["status"]),
+		Ready:          boolv(payload["ready"]) || equalFoldReady(phase),
+		APIEndpoint:    str(payload["api_endpoint"]),
+		ActiveExecutor: str(payload["active_executor"]),
+		LastError:      str(payload["last_error"]),
+		Desired:        i32(payload["desired"]),
+		Current:        i32(payload["current"]),
+		ReadyCount:     i32(payload["ready"]),
+	}
+	if status.Kind == "InferenceCellSet" && status.Desired > 0 {
+		status.Ready = status.Ready || status.ReadyCount >= status.Desired
+	}
+	return status
+}
+
 func ParseNodeSummary(payload map[string]any) NodeSummary {
 	summary := NodeSummary{Total: i32(payload["count"])}
 	nodes, ok := payload["nodes"].([]any)
@@ -79,6 +116,19 @@ func ParseNodeSummary(payload map[string]any) NodeSummary {
 		}
 	}
 	return summary
+}
+
+func firstStatus(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func equalFoldReady(value string) bool {
+	return value == "ready" || value == "Ready" || value == "READY"
 }
 
 func str(v any) string {

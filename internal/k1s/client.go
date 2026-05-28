@@ -134,6 +134,41 @@ func (c *Client) DeleteApp(ctx context.Context, app string, purge bool) (map[str
 	return out, err
 }
 
+func (c *Client) InferenceCellStatus(ctx context.Context, namespace, name string) (InferenceStatus, error) {
+	return c.inferenceStatus(ctx, "cells", namespace, name)
+}
+
+func (c *Client) InferenceCellSetStatus(ctx context.Context, namespace, name string) (InferenceStatus, error) {
+	return c.inferenceStatus(ctx, "cellsets", namespace, name)
+}
+
+func (c *Client) DeleteInferenceCell(ctx context.Context, namespace, name string) (map[string]any, error) {
+	return c.deleteInference(ctx, "cells", namespace, name)
+}
+
+func (c *Client) DeleteInferenceCellSet(ctx context.Context, namespace, name string) (map[string]any, error) {
+	return c.deleteInference(ctx, "cellsets", namespace, name)
+}
+
+func (c *Client) inferenceStatus(ctx context.Context, collection, namespace, name string) (InferenceStatus, error) {
+	endpoint := "/inference/" + collection + "/" + url.PathEscape(namespace) + "/" + url.PathEscape(name)
+	var payload map[string]any
+	if err := c.getJSON(ctx, endpoint, &payload); err != nil {
+		return InferenceStatus{}, err
+	}
+	return ParseInferenceStatus(payload), nil
+}
+
+func (c *Client) deleteInference(ctx context.Context, collection, namespace, name string) (map[string]any, error) {
+	endpoint := "/inference/delete/" + collection + "/" + url.PathEscape(name)
+	if namespace != "" {
+		endpoint += "?namespace=" + url.QueryEscape(namespace)
+	}
+	var out map[string]any
+	err := c.postJSON(ctx, endpoint, map[string]any{}, &out)
+	return out, err
+}
+
 func (c *Client) getJSON(ctx context.Context, endpoint string, out any) error {
 	return c.doJSONWithLeaderRetry(ctx, http.MethodGet, endpoint, nil, out)
 }

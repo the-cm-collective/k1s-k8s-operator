@@ -148,6 +148,13 @@ func (r *K1sInferenceEndpointReconciler) Reconcile(ctx context.Context, req ctrl
 	}
 	if !endpoint.ObjectMeta.DeletionTimestamp.IsZero() {
 		if containsString(endpoint.Finalizers, capabilityFinalizer) {
+			if endpoint.Spec.DeletePolicy != operatorv1alpha1.K1sDeletePolicyOrphan {
+				if endpoint.Spec.CellSet != nil {
+					_, _ = api.DeleteInferenceCellSet(ctx, endpoint.Namespace, endpoint.Name)
+				} else {
+					_, _ = api.DeleteInferenceCell(ctx, endpoint.Namespace, endpoint.Name)
+				}
+			}
 			endpoint.Finalizers = removeString(endpoint.Finalizers, capabilityFinalizer)
 			return ctrl.Result{}, r.Update(ctx, endpoint)
 		}
@@ -189,6 +196,13 @@ func (r *K1sInferenceEndpointReconciler) Reconcile(ctx context.Context, req ctrl
 	} else {
 		endpoint.Status.LastError = ""
 		setCondition(&endpoint.Status.Conditions, operatorv1alpha1.ConditionApplied, metav1.ConditionTrue, operatorv1alpha1.ReasonApplied, "inference manifest applied to k1s", endpoint.Generation)
+		if observed, statusErr := inferenceStatusForEndpoint(ctx, api, endpoint); statusErr == nil {
+			applyObservedInferenceStatus(&endpoint.Status, observed)
+		} else {
+			endpoint.Status.Ready = false
+			endpoint.Status.LastError = statusErr.Error()
+			setCondition(&endpoint.Status.Conditions, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonUnavailable, "manifest applied but inference status could not be read: "+statusErr.Error(), endpoint.Generation)
+		}
 	}
 	setCondition(&endpoint.Status.Conditions, operatorv1alpha1.ConditionReady, conditionStatus(endpoint.Status.Ready), reasonForBool(endpoint.Status.Ready), readyMessage(endpoint.Status.Ready), endpoint.Generation)
 	return ctrl.Result{RequeueAfter: pollInterval(cluster.Spec.PollIntervalSeconds)}, r.Status().Update(ctx, endpoint)
@@ -265,6 +279,15 @@ func buildInferenceManifest(endpoint *operatorv1alpha1.K1sInferenceEndpoint) ([]
 	if endpoint.Spec.Model.ModelID == "" {
 		return nil, fmt.Errorf("spec.model.modelId is required")
 	}
+	executor := map[string]any{
+		"type": firstNonEmpty(endpoint.Spec.Executor.Type, "ray"),
+	}
+	addString(executor, "fallbackMode", endpoint.Spec.Executor.FallbackMode)
+	addString(executor, "rayImage", endpoint.Spec.Executor.RayImage)
+	addString(executor, "mpImage", endpoint.Spec.Executor.MPImage)
+	addString(executor, "launcherImage", endpoint.Spec.Executor.LauncherImage)
+	addString(executor, "dtype", endpoint.Spec.Executor.DType)
+	addString(executor, "runtimeClassName", endpoint.Spec.Executor.RuntimeClassName)
 	spec := map[string]any{
 		"model": map[string]any{
 			"modelId":   endpoint.Spec.Model.ModelID,
@@ -274,15 +297,7 @@ func buildInferenceManifest(endpoint *operatorv1alpha1.K1sInferenceEndpoint) ([]
 			"tp": defaultI32(endpoint.Spec.Parallelism.TP, 1),
 			"pp": defaultI32(endpoint.Spec.Parallelism.PP, 1),
 		},
-		"executor": map[string]any{
-			"type":             firstNonEmpty(endpoint.Spec.Executor.Type, "ray"),
-			"fallbackMode":     endpoint.Spec.Executor.FallbackMode,
-			"rayImage":         endpoint.Spec.Executor.RayImage,
-			"mpImage":          endpoint.Spec.Executor.MPImage,
-			"launcherImage":    endpoint.Spec.Executor.LauncherImage,
-			"dtype":            endpoint.Spec.Executor.DType,
-			"runtimeClassName": endpoint.Spec.Executor.RuntimeClassName,
-		},
+		"executor": executor,
 		"fabric": map[string]any{
 			"mode":       firstNonEmpty(endpoint.Spec.Fabric.Mode, "lan_direct"),
 			"policyMode": firstNonEmpty(endpoint.Spec.Fabric.PolicyMode, "strict_membership"),
@@ -314,6 +329,12 @@ func buildInferenceManifest(endpoint *operatorv1alpha1.K1sInferenceEndpoint) ([]
 		"spec": spec,
 	}
 	return json.Marshal(payload)
+}
+
+func addString(payload map[string]any, key, value string) {
+	if value != "" {
+		payload[key] = value
+	}
 }
 
 func kindFromManifest(raw []byte) string {
@@ -363,6 +384,27 @@ func applyObservedAppStatus(status *operatorv1alpha1.K1sAppStatus, observed k1sc
 	}
 	status.Image = observed.Image
 	status.Revision = observed.Revision
+}
+
+func inferenceStatusForEndpoint(ctx context.Context, api *k1sclient.Client, endpoint *operatorv1alpha1.K1sInferenceEndpoint) (k1sclient.InferenceStatus, error) {
+	if endpoint.Spec.CellSet != nil {
+		return api.InferenceCellSetStatus(ctx, endpoint.Namespace, endpoint.Name)
+	}
+	return api.InferenceCellStatus(ctx, endpoint.Namespace, endpoint.Name)
+}
+
+func applyObservedInferenceStatus(status *operatorv1alpha1.K1sInferenceEndpointStatus, observed k1sclient.InferenceStatus) {
+	status.Ready = observed.Ready
+	status.Phase = firstNonEmpty(observed.Phase, observed.Status, status.Phase)
+	status.APIEndpoint = firstNonEmpty(observed.APIEndpoint, status.APIEndpoint)
+	status.ActiveExecutor = firstNonEmpty(observed.ActiveExecutor, status.ActiveExecutor)
+	status.LastError = observed.LastError
+	if observed.Kind == "InferenceCellSet" {
+		status.CellName = ""
+		status.CellSetName = firstNonEmpty(observed.Name, status.CellSetName)
+		return
+	}
+	status.CellName = firstNonEmpty(observed.Name, status.CellName)
 }
 
 func observedEndpoint(observed k1sclient.AppStatus) string {

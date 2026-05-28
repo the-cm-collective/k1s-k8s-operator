@@ -42,6 +42,10 @@ func TestBuildInferenceManifestSingleCell(t *testing.T) {
 	if model["modelId"] != "llama-3.1-8b" {
 		t.Fatalf("unexpected model: %#v", model)
 	}
+	executor := spec["executor"].(map[string]any)
+	if _, ok := executor["fallbackMode"]; ok {
+		t.Fatalf("empty optional executor fields should be omitted: %#v", executor)
+	}
 }
 
 func TestBuildInferenceManifestCellSet(t *testing.T) {
@@ -168,6 +172,76 @@ func TestInferenceEndpointReportsUnsupportedWhenK1sRejectsApply(t *testing.T) {
 	}
 	applied := findCondition(got.Status.Conditions, operatorv1alpha1.ConditionApplied)
 	if applied == nil || applied.Status != metav1.ConditionFalse || applied.Reason != operatorv1alpha1.ReasonUnsupported {
+		t.Fatalf("unexpected applied condition: %#v", applied)
+	}
+}
+
+func TestInferenceEndpointMapsObservedK1sStatus(t *testing.T) {
+	ctx := context.Background()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/apply":
+			_, _ = w.Write([]byte(`{"kind":"InferenceCell","name":"llama","namespace":"ml","phase":"PROGRESSING","status":"progressing"}`))
+		case "/inference/cells/ml/llama":
+			_, _ = w.Write([]byte(`{"kind":"InferenceCell","name":"llama","namespace":"ml","phase":"READY","status":"ready","ready":true,"api_endpoint":"10.0.0.10:18080","active_executor":"ray"}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	scheme := runtime.NewScheme()
+	if err := operatorv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	cluster := &operatorv1alpha1.K1sCluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "dev-a", Namespace: "ml"},
+		Spec: operatorv1alpha1.K1sClusterSpec{
+			Controller: operatorv1alpha1.K1sEndpointSpec{URL: server.URL},
+			AuthSecretRef: &operatorv1alpha1.K1sAuthSecretRef{
+				Name:                    "k1s-creds",
+				ControllerWriteTokenKey: "write",
+			},
+		},
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "k1s-creds", Namespace: "ml"},
+		Data:       map[string][]byte{"write": []byte("token")},
+	}
+	endpoint := &operatorv1alpha1.K1sInferenceEndpoint{
+		ObjectMeta: metav1.ObjectMeta{Name: "llama", Namespace: "ml"},
+		Spec: operatorv1alpha1.K1sInferenceEndpointSpec{
+			ClusterRef: operatorv1alpha1.NamespacedNameRef{Name: "dev-a"},
+			Model:      operatorv1alpha1.K1sInferenceModelSpec{ModelID: "llama-3.2-1b", LocalPath: "/models/llama"},
+		},
+	}
+	kube := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cluster, secret, endpoint).
+		WithStatusSubresource(&operatorv1alpha1.K1sInferenceEndpoint{}).
+		Build()
+	reconciler := &K1sInferenceEndpointReconciler{Client: kube, Scheme: scheme}
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "ml", Name: "llama"}}
+
+	if _, err := reconciler.Reconcile(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconciler.Reconcile(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	got := &operatorv1alpha1.K1sInferenceEndpoint{}
+	if err := kube.Get(ctx, req.NamespacedName, got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Status.Ready || got.Status.Phase != "READY" || got.Status.APIEndpoint != "10.0.0.10:18080" || got.Status.ActiveExecutor != "ray" {
+		t.Fatalf("unexpected observed status: %#v", got.Status)
+	}
+	applied := findCondition(got.Status.Conditions, operatorv1alpha1.ConditionApplied)
+	if applied == nil || applied.Status != metav1.ConditionTrue {
 		t.Fatalf("unexpected applied condition: %#v", applied)
 	}
 }

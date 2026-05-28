@@ -44,6 +44,57 @@ func TestParseNodeSummary(t *testing.T) {
 	}
 }
 
+func TestParseInferenceStatusReady(t *testing.T) {
+	status := ParseInferenceStatus(map[string]any{
+		"kind":            "InferenceCell",
+		"name":            "llama",
+		"namespace":       "ml",
+		"phase":           "READY",
+		"status":          "ready",
+		"ready":           true,
+		"api_endpoint":    "10.0.0.10:18080",
+		"active_executor": "ray",
+	})
+	if !status.Ready || status.Phase != "READY" || status.APIEndpoint == "" || status.ActiveExecutor != "ray" {
+		t.Fatalf("unexpected inference status: %#v", status)
+	}
+}
+
+func TestInferenceStatusAndDeleteUseNativeRoutes(t *testing.T) {
+	var sawDelete bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/inference/cells/ml/llama":
+			_, _ = w.Write([]byte(`{"kind":"InferenceCell","name":"llama","namespace":"ml","phase":"READY","ready":true}`))
+		case "/inference/delete/cells/llama":
+			sawDelete = r.URL.Query().Get("namespace") == "ml"
+			_, _ = w.Write([]byte(`{"kind":"InferenceCell","name":"llama","namespace":"ml","removed":true}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := client.InferenceCellStatus(context.Background(), "ml", "llama")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Ready || status.Name != "llama" {
+		t.Fatalf("unexpected status: %#v", status)
+	}
+	if _, err := client.DeleteInferenceCell(context.Background(), "ml", "llama"); err != nil {
+		t.Fatal(err)
+	}
+	if !sawDelete {
+		t.Fatalf("delete route did not include namespace query")
+	}
+}
+
 func TestApplyRetriesAdvertisedLeader(t *testing.T) {
 	var leaderHit bool
 	leader := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
