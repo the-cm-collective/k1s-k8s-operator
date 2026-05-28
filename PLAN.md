@@ -36,6 +36,7 @@ Current development cluster observations:
 - Bootstrap ConfigMap: `k1s-dev-a-k1s-core-ha-bootstrap`.
 - Bootstrap values include:
   - `api_url: https://api.k1s-dev-a.core.home.arpa/`
+  - controller-native in-cluster URL for this operator: `http://k1s-dev-a-k1s-core-ha-controller.k1s-dev-a.svc:9108`
   - `stack_domain: k1s-dev-a.core.home.arpa`
   - `wildcard_apps_domain: *.apps.k1s-dev-a.core.home.arpa`
   - `auth_secret_name: k1s-dev-a-k1s-core-ha-auth`
@@ -171,7 +172,7 @@ metadata:
   namespace: k1s-operator-dev
 spec:
   controller:
-    url: https://api.k1s-dev-a.core.home.arpa/
+    url: http://k1s-dev-a-k1s-core-ha-controller.k1s-dev-a.svc:9108
   apishim:
     url: https://k1s-dev-a-k1s-core-ha-apishim.k1s-dev-a.svc:8445
   bootstrapConfigMapRef:

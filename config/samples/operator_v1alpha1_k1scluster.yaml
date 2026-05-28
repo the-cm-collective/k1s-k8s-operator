@@ -5,7 +5,7 @@ metadata:
   namespace: k1s-operator-dev
 spec:
   controller:
-    url: https://api.k1s-dev-a.core.home.arpa/
+    url: http://k1s-dev-a-k1s-core-ha-controller.k1s-dev-a.svc:9108
   apishim:
     url: https://k1s-dev-a-k1s-core-ha-apishim.k1s-dev-a.svc:8445
   bootstrapConfigMapRef:

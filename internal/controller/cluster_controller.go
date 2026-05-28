@@ -80,7 +80,7 @@ func (r *K1sClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		setCondition(&status.Conditions, operatorv1alpha1.ConditionApishimAvailable, metav1.ConditionFalse, operatorv1alpha1.ReasonPending, "apishim URL configured; active apishim health check is deferred", cluster.Generation)
 	}
 	ready := status.ControllerAvailable && status.ProxyReady && err == nil
-	setCondition(&status.Conditions, operatorv1alpha1.ConditionReady, conditionStatus(ready), reasonForBool(ready), readyMessage(ready), cluster.Generation)
+	setCondition(&status.Conditions, operatorv1alpha1.ConditionReady, conditionStatus(ready), reasonForBool(ready), clusterReadyMessage(ready), cluster.Generation)
 	cluster.Status = status
 	if updateErr := r.Status().Update(ctx, cluster); updateErr != nil {
 		logger.Error(updateErr, "unable to update K1sCluster status")
@@ -117,6 +117,13 @@ func proxyMessage(count int) string {
 }
 
 func readyMessage(ok bool) string {
+	if ok {
+		return "resource is ready"
+	}
+	return "resource is not ready"
+}
+
+func clusterReadyMessage(ok bool) string {
 	if ok {
 		return "cluster is ready"
 	}
