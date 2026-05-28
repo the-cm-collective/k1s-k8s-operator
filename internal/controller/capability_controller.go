@@ -183,6 +183,7 @@ func (r *K1sInferenceEndpointReconciler) Reconcile(ctx context.Context, req ctrl
 	setCondition(&endpoint.Status.Conditions, operatorv1alpha1.ConditionAccepted, metav1.ConditionTrue, operatorv1alpha1.ReasonReady, "K1sInferenceEndpoint accepted by operator", endpoint.Generation)
 	if applyErr != nil {
 		endpoint.Status.Ready = false
+		endpoint.Status.Phase = "Unsupported"
 		endpoint.Status.LastError = applyErr.Error()
 		setCondition(&endpoint.Status.Conditions, operatorv1alpha1.ConditionApplied, metav1.ConditionFalse, operatorv1alpha1.ReasonUnsupported, "k1s inference CRUD API is not available or rejected the request: "+applyErr.Error(), endpoint.Generation)
 	} else {

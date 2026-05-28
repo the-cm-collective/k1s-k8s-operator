@@ -1,12 +1,21 @@
 package controller
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	operatorv1alpha1 "github.com/k1s-project/k1s-operator/api/v1alpha1"
 	k1sclient "github.com/k1s-project/k1s-operator/internal/k1s"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func TestBuildInferenceManifestSingleCell(t *testing.T) {
@@ -83,4 +92,91 @@ func TestApplyObservedAppStatus(t *testing.T) {
 	if status.Replicas.Ready != 2 || status.Image == "" || status.Revision != "7" {
 		t.Fatalf("missing observed fields: %#v", status)
 	}
+}
+
+func TestInferenceEndpointReportsUnsupportedWhenK1sRejectsApply(t *testing.T) {
+	ctx := context.Background()
+	var sawInferenceManifest bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/apply" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		sawInferenceManifest = payload["kind"] == "InferenceCell"
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"unsupported kind InferenceCell"}`))
+	}))
+	defer server.Close()
+
+	scheme := runtime.NewScheme()
+	if err := operatorv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	cluster := &operatorv1alpha1.K1sCluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "dev-a", Namespace: "ml"},
+		Spec: operatorv1alpha1.K1sClusterSpec{
+			Controller: operatorv1alpha1.K1sEndpointSpec{URL: server.URL},
+			AuthSecretRef: &operatorv1alpha1.K1sAuthSecretRef{
+				Name:                    "k1s-creds",
+				ControllerWriteTokenKey: "write",
+			},
+		},
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "k1s-creds", Namespace: "ml"},
+		Data:       map[string][]byte{"write": []byte("token")},
+	}
+	endpoint := &operatorv1alpha1.K1sInferenceEndpoint{
+		ObjectMeta: metav1.ObjectMeta{Name: "llama", Namespace: "ml"},
+		Spec: operatorv1alpha1.K1sInferenceEndpointSpec{
+			ClusterRef: operatorv1alpha1.NamespacedNameRef{Name: "dev-a"},
+			Model:      operatorv1alpha1.K1sInferenceModelSpec{ModelID: "llama-3.2-1b"},
+		},
+	}
+	kube := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cluster, secret, endpoint).
+		WithStatusSubresource(&operatorv1alpha1.K1sInferenceEndpoint{}).
+		Build()
+	reconciler := &K1sInferenceEndpointReconciler{Client: kube, Scheme: scheme}
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "ml", Name: "llama"}}
+
+	if _, err := reconciler.Reconcile(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconciler.Reconcile(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	got := &operatorv1alpha1.K1sInferenceEndpoint{}
+	if err := kube.Get(ctx, req.NamespacedName, got); err != nil {
+		t.Fatal(err)
+	}
+	if !sawInferenceManifest {
+		t.Fatalf("expected reconciler to render an InferenceCell manifest")
+	}
+	if got.Status.Phase != "Unsupported" || got.Status.Ready {
+		t.Fatalf("unexpected status: %#v", got.Status)
+	}
+	if !strings.Contains(got.Status.LastError, "unsupported kind InferenceCell") {
+		t.Fatalf("missing apply error in status: %#v", got.Status)
+	}
+	applied := findCondition(got.Status.Conditions, operatorv1alpha1.ConditionApplied)
+	if applied == nil || applied.Status != metav1.ConditionFalse || applied.Reason != operatorv1alpha1.ReasonUnsupported {
+		t.Fatalf("unexpected applied condition: %#v", applied)
+	}
+}
+
+func findCondition(conditions []metav1.Condition, conditionType string) *metav1.Condition {
+	for i := range conditions {
+		if conditions[i].Type == conditionType {
+			return &conditions[i]
+		}
+	}
+	return nil
 }
