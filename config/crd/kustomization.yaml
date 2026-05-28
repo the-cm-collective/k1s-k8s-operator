@@ -1,0 +1,7 @@
+resources:
+- bases/operator.k1s.io_k1sappmirrors.yaml
+- bases/operator.k1s.io_k1sapps.yaml
+- bases/operator.k1s.io_k1sclusters.yaml
+- bases/operator.k1s.io_k1sexposures.yaml
+- bases/operator.k1s.io_k1sinferenceendpoints.yaml
+- bases/operator.k1s.io_k1sresourcesets.yaml

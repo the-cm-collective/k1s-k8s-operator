@@ -1,6 +1,6 @@
 # k1s Kubernetes Operator Plan
 
-Status: planning draft
+Status: implementation draft
 Date: 2026-05-28
 Repository: `k1s-operator`
 Sibling reference implementation: `../k1s`
@@ -18,6 +18,8 @@ The first version should be intentionally narrow:
 - Kubernetes-native resources generated in the namespace where the exposure object lives.
 
 This keeps the operator useful in the current microk8s lab while leaving room for API shim, Gateway API, L4, and richer management features later.
+
+The second checkpoint set should extend the operator from read-only exposure into RBAC-scoped capability delegation. The goal is not to fully integrate k1s with the Kubernetes scheduler. Kubernetes workloads and tenants should be able to create, discover, update, and delete selected k1s-side resources through Kubernetes CRDs and normal Kubernetes RBAC, while the operator remains the only component that holds scoped k1s write credentials. This is useful for both standard services delivered through k1s and AI/ML workflows such as inference APIs, model serving endpoints, and GPU-backed runtime cells.
 
 ## Local Lab Baseline
 
@@ -100,18 +102,23 @@ Reference docs in `../k1s`:
 8. Emit Kubernetes Events for meaningful state transitions and failure cases.
 9. Reconcile continuously and recover from deleted generated resources.
 10. Clean up generated resources when the owning custom resource is deleted.
+11. In Stage 2, allow authorized Kubernetes users and workloads to CRUD selected k1s resources through operator-owned CRDs.
+12. In Stage 2, support both standard service/workload resources and AI/ML inference resources.
+13. In Stage 2, surface k1s-side discovery and status through Kubernetes status without allowing the Kubernetes scheduler to place workloads on k1s nodes.
 
 ### Security Requirements
 
 1. The operator must use least-privilege k1s credentials.
 2. The recommended Secret must contain only read credentials, not the broad HA bootstrap Secret.
-3. v1 must not call k1s mutation endpoints.
-4. v1 must not require API shim admin credentials.
-5. TLS verification must be enabled by default when using HTTPS URLs.
-6. CA bundles must be configurable through a Secret or ConfigMap reference.
-7. Generated Kubernetes resources must be owned by their custom resource where Kubernetes owner-reference rules permit it.
-8. Cross-namespace reads must be explicit and covered by operator RBAC.
-9. Tokens must never be written into status, Events, logs, labels, annotations, or generated resources.
+3. Stage 1 must not call k1s mutation endpoints.
+4. Stage 2 mutation must be explicitly enabled by scoped k1s write credentials and Kubernetes RBAC on the mutating CRDs.
+5. v1 must not require API shim admin credentials.
+6. TLS verification must be enabled by default when using HTTPS URLs.
+7. CA bundles must be configurable through a Secret or ConfigMap reference.
+8. Generated Kubernetes resources must be owned by their custom resource where Kubernetes owner-reference rules permit it.
+9. Cross-namespace reads must be explicit and covered by operator RBAC.
+10. Tokens must never be written into status, Events, logs, labels, annotations, or generated resources.
+11. Stage 2 must separate read tokens and write tokens so read-only exposure installs do not accidentally receive mutation authority.
 
 ### Operational Requirements
 
@@ -127,7 +134,7 @@ Reference docs in `../k1s`:
 ## Non-Goals For v1
 
 - Replacing k1s desired-state management with Kubernetes CRDs.
-- Applying k1s app manifests from Kubernetes.
+- Applying k1s app manifests from Kubernetes in the Stage 1 read-only bridge.
 - Scaling, deleting, pausing, resuming, or execing into k1s workloads.
 - General TCP/UDP or LoadBalancer bridging.
 - Direct mirroring of k1s pod or replica IPs as the primary traffic path.
@@ -137,6 +144,8 @@ Reference docs in `../k1s`:
 - Creating or modifying k1s ingress routes.
 - Full API shim synchronization.
 - Kubernetes conformance.
+- Presenting k1s nodes as Kubernetes schedulable nodes.
+- Letting the Kubernetes controller manager or scheduler directly place workloads on k1s.
 
 ## API Design
 
@@ -326,6 +335,24 @@ status:
 ```
 
 The mirror exists so users can inspect app state without overloading the exposure status. It also gives later versions a natural place to add richer app inventory, placement, rollout, and policy status.
+
+### Stage 2 Capability Resources
+
+Stage 2 adds mutating, RBAC-scoped resources. These resources are still Kubernetes-side delegation objects, not Kubernetes scheduling primitives. The Kubernetes API server stores desired intent, the operator translates allowed intent into k1s controller requests, and k1s remains responsible for placement, execution, networking, and runtime-specific lifecycle.
+
+`K1sApp` is the standard workload path. It accepts an allowlisted k1s app/deployment manifest, applies it through the k1s controller with a write token, reports accepted/applied/ready conditions, and optionally pairs with a `K1sExposure` for Kubernetes-side traffic. This covers ordinary HTTP services and other standard services that k1s can deliver.
+
+`K1sInferenceEndpoint` is the AI/ML path. It describes model identity, tensor/pipeline parallelism, executor preferences, fabric policy, runtime class hints, and optional cell set replication. The operator renders this into k1s-native inference resources such as `InferenceCell` or `InferenceCellSet`. Status should report the active executor, serving endpoint, cell/cell-set name, readiness, and the last k1s-side error.
+
+`K1sResourceSet` is the advanced escape hatch. It accepts multiple native k1s manifests but only applies kinds allowed by policy. Its default allowlist should cover standard deployments and inference resources. This keeps the operator extensible while still avoiding a broad arbitrary-write surface.
+
+The most viable integration path between the Kubernetes-side AE and the k1s-side AE is:
+
+1. Keep the Kubernetes-facing contract as CRDs plus ordinary Kubernetes RBAC.
+2. Keep k1s mutation authority inside the operator through scoped write tokens stored in Secrets.
+3. Use k1s controller APIs for standard `Deployment` apply/delete first, because the current controller already has the closest matching surface.
+4. Add or stabilize a k1s-side mutation API for inference resources before treating `K1sInferenceEndpoint` as production-ready.
+5. Use status and discovery as the contract between the AEs: Kubernetes users see CRD conditions and mirrors; k1s owns placement, execution, and runtime detail.
 
 ## Generated Kubernetes Resources
 
@@ -641,6 +668,44 @@ Checkpoint:
 
 - commit and tag only after the end-to-end lab path is green.
 
+### Stage 2: Capability CRUD And Discovery
+
+Stage 2 deliberately increases scope. It should be developed as a checkpoint set after the Stage 1 exposure path is green in unit tests, WorkerBee local validation, k1s dev profile validation, and microk8s lab validation.
+
+Deliverables:
+
+- `K1sApp` CRD and reconciler for standard k1s workload/app lifecycle;
+- `K1sInferenceEndpoint` CRD and reconciler for AI/ML inference endpoint lifecycle;
+- `K1sResourceSet` CRD and reconciler for allowlisted native k1s manifests;
+- read/write credential split in `K1sCluster.spec.authSecretRef`;
+- explicit conditions for accepted, policy allowed, applied, ready, and unsupported k1s-side capability cases;
+- discovery/status mapping from k1s back into Kubernetes status for standard and AI/ML workflows;
+- samples for standard service, inference endpoint, and mixed resource set usage.
+
+Validation:
+
+- unit tests for manifest rendering, allowlist enforcement, delete policy behavior, and status parsing;
+- fake-client reconciliation tests for RBAC-visible status and finalizers;
+- k1s dev profile tests for standard app apply/status/delete;
+- k1s-side API tests for inference resources before promoting AI/ML CRUD beyond scaffold status;
+- microk8s dry-run for all CRDs/RBAC/samples;
+- live microk8s run using scoped write credentials in a separate operator namespace.
+
+Checkpoint set:
+
+1. Stage 2A: standard `K1sApp` apply/status/delete using existing k1s deployment APIs.
+2. Stage 2B: `K1sInferenceEndpoint` API scaffold and manifest rendering, marked `Unsupported` when the k1s-side inference mutation API is unavailable.
+3. Stage 2C: k1s-side inference mutation/discovery API in `../k1s`, validated from workerbee local and k1s dev profile.
+4. Stage 2D: resource discovery and mirror status for both standard and AI/ML resources.
+5. Stage 2E: microk8s end-to-end validation with a standard service and an AI/ML inference endpoint, then stage and commit if green.
+
+Stop conditions:
+
+- missing or unsafe write-token boundaries;
+- k1s-side inference API cannot be reconciled with the desired CRD contract;
+- RBAC requires broader access than the specific CRDs, generated resources, and referenced Secrets/ConfigMaps;
+- Kubernetes would need to schedule directly onto k1s to satisfy the feature.
+
 ## Acceptance Criteria For v1
 
 v1 is complete when:
@@ -716,4 +781,3 @@ For the first implementation pass:
 6. Create `K1sAppMirror` as a visible namespaced CRD, owned by `K1sExposure`.
 7. Use Ingress for v1 because the local microk8s cluster has Ingress but not Gateway API.
 8. Treat Gateway API as a planned follow-up.
-

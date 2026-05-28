@@ -1,0 +1,19 @@
+apiVersion: operator.k1s.io/v1alpha1
+kind: K1sExposure
+metadata:
+  name: echo
+  namespace: k1s-operator-dev
+spec:
+  clusterRef:
+    name: dev-a
+  appRef:
+    namespace: default
+    name: echo
+  host: echo.apps.k1s-dev-a.core.home.arpa
+  path: /
+  service:
+    name: echo-k1s
+    port: 80
+  ingress:
+    enabled: true
+    className: nginx

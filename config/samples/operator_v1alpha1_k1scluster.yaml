@@ -1,0 +1,26 @@
+apiVersion: operator.k1s.io/v1alpha1
+kind: K1sCluster
+metadata:
+  name: dev-a
+  namespace: k1s-operator-dev
+spec:
+  controller:
+    url: https://api.k1s-dev-a.core.home.arpa/
+  apishim:
+    url: https://k1s-dev-a-k1s-core-ha-apishim.k1s-dev-a.svc:8445
+  bootstrapConfigMapRef:
+    name: k1s-dev-a-k1s-core-ha-bootstrap
+    namespace: k1s-dev-a
+  authSecretRef:
+    name: k1s-dev-a-operator
+    namespace: k1s-operator-dev
+    controllerReadTokenKey: controllerReadToken
+    controllerWriteTokenKey: controllerWriteToken
+    caBundleKey: ca.crt
+  proxy:
+    mode: Service
+    serviceRef:
+      name: k1s-dev-a-k1s-core-ha-edge-proxy
+      namespace: k1s-dev-a
+      port: 10080
+  pollIntervalSeconds: 15

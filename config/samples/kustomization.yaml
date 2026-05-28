@@ -1,0 +1,6 @@
+resources:
+- operator_v1alpha1_k1scluster.yaml
+- operator_v1alpha1_k1sexposure.yaml
+- operator_v1alpha1_k1sapp.yaml
+- operator_v1alpha1_k1sinferenceendpoint.yaml
+- operator_v1alpha1_k1sresourceset.yaml

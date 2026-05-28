@@ -1,0 +1,21 @@
+// Package controller contains Kubernetes reconcilers for the k1s operator.
+// +kubebuilder:rbac:groups=operator.k1s.io,resources=k1sclusters,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=operator.k1s.io,resources=k1sclusters/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=operator.k1s.io,resources=k1sexposures,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=operator.k1s.io,resources=k1sexposures/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=operator.k1s.io,resources=k1sappmirrors,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=operator.k1s.io,resources=k1sappmirrors/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=operator.k1s.io,resources=k1sapps,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=operator.k1s.io,resources=k1sapps/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=operator.k1s.io,resources=k1sapps/finalizers,verbs=update
+// +kubebuilder:rbac:groups=operator.k1s.io,resources=k1sinferenceendpoints,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=operator.k1s.io,resources=k1sinferenceendpoints/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=operator.k1s.io,resources=k1sinferenceendpoints/finalizers,verbs=update
+// +kubebuilder:rbac:groups=operator.k1s.io,resources=k1sresourcesets,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=operator.k1s.io,resources=k1sresourcesets/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=operator.k1s.io,resources=k1sresourcesets/finalizers,verbs=update
+// +kubebuilder:rbac:groups="",resources=configmaps;secrets;services,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=services,verbs=create;update;patch;delete
+// +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
+package controller

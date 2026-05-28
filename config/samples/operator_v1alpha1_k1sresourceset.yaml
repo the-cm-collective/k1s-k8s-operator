@@ -1,0 +1,38 @@
+apiVersion: operator.k1s.io/v1alpha1
+kind: K1sResourceSet
+metadata:
+  name: mixed-standard-ai
+  namespace: k1s-operator-dev
+spec:
+  clusterRef:
+    name: dev-a
+  allowedKinds:
+  - Deployment
+  - InferenceCell
+  manifests:
+  - apiVersion: ae.dev/v1alpha1
+    kind: Deployment
+    metadata:
+      name: echo
+      namespace: default
+    spec:
+      image: hashicorp/http-echo:1.0
+      args:
+      - -text=hello from k1s
+      ports:
+      - containerPort: 5678
+  - apiVersion: ae.dev/v1alpha1
+    kind: InferenceCell
+    metadata:
+      name: llama-smoke
+      namespace: default
+    spec:
+      model:
+        modelId: meta-llama/Llama-3.2-1B-Instruct
+      parallelism:
+        tp: 1
+        pp: 1
+      executor:
+        type: ray
+      fabric:
+        mode: lan_direct

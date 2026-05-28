@@ -1,0 +1,21 @@
+apiVersion: operator.k1s.io/v1alpha1
+kind: K1sApp
+metadata:
+  name: echo
+  namespace: k1s-operator-dev
+spec:
+  clusterRef:
+    name: dev-a
+  deletePolicy: Delete
+  manifest:
+    apiVersion: ae.dev/v1alpha1
+    kind: Deployment
+    metadata:
+      name: echo
+      namespace: default
+    spec:
+      image: hashicorp/http-echo:1.0
+      args:
+      - -text=hello from k1s
+      ports:
+      - containerPort: 5678
