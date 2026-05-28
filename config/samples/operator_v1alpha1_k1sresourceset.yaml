@@ -20,7 +20,8 @@ spec:
       args:
       - -text=hello from k1s
       ports:
-      - containerPort: 5678
+      - name: http
+        containerPort: 5678
   - apiVersion: ae.dev/v1alpha1
     kind: InferenceCell
     metadata:

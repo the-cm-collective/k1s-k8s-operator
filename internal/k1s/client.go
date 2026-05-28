@@ -135,11 +135,7 @@ func (c *Client) DeleteApp(ctx context.Context, app string, purge bool) (map[str
 }
 
 func (c *Client) getJSON(ctx context.Context, endpoint string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url(endpoint), nil)
-	if err != nil {
-		return err
-	}
-	return c.doJSON(req, out)
+	return c.doJSONWithLeaderRetry(ctx, http.MethodGet, endpoint, nil, out)
 }
 
 func (c *Client) postJSON(ctx context.Context, endpoint string, payload any, out any) error {
@@ -147,15 +143,33 @@ func (c *Client) postJSON(ctx context.Context, endpoint string, payload any, out
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url(endpoint), bytes.NewReader(body))
+	return c.doJSONWithLeaderRetry(ctx, http.MethodPost, endpoint, body, out)
+}
+
+func (c *Client) doJSONWithLeaderRetry(ctx context.Context, method, endpoint string, body []byte, out any) error {
+	err := c.doJSONRequest(ctx, method, c.url(endpoint), body, out)
+	if redirect, ok := err.(*notLeaderError); ok && redirect.advertiseAddr != "" {
+		leaderBase, parseErr := url.Parse(redirect.advertiseAddr)
+		if parseErr != nil {
+			return err
+		}
+		return c.doJSONRequest(ctx, method, buildURL(leaderBase, endpoint), body, out)
+	}
+	return err
+}
+
+func (c *Client) doJSONRequest(ctx context.Context, method, rawURL string, body []byte, out any) error {
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, rawURL, reader)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	return c.doJSON(req, out)
-}
-
-func (c *Client) doJSON(req *http.Request, out any) error {
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
@@ -164,18 +178,28 @@ func (c *Client) doJSON(req *http.Request, out any) error {
 		return err
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return fmt.Errorf("k1s API %s %s returned %d: %s", req.Method, req.URL.Path, resp.StatusCode, strings.TrimSpace(string(body)))
+		if redirect := parseNotLeader(resp.StatusCode, respBody); redirect != nil {
+			redirect.method = req.Method
+			redirect.path = req.URL.Path
+			redirect.body = strings.TrimSpace(string(respBody))
+			return redirect
+		}
+		return fmt.Errorf("k1s API %s %s returned %d: %s", req.Method, req.URL.Path, resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
-	if out == nil || len(body) == 0 {
+	if out == nil || len(respBody) == 0 {
 		return nil
 	}
-	return json.Unmarshal(body, out)
+	return json.Unmarshal(respBody, out)
 }
 
 func (c *Client) url(endpoint string) string {
-	next := *c.baseURL
+	return buildURL(c.baseURL, endpoint)
+}
+
+func buildURL(base *url.URL, endpoint string) string {
+	next := *base
 	basePath := strings.TrimRight(next.Path, "/")
 	endpointPath := "/" + strings.TrimLeft(endpoint, "/")
 	next.Path = path.Join(basePath, endpointPath)
@@ -188,4 +212,36 @@ func (c *Client) url(endpoint string) string {
 		next.RawQuery = parts[1]
 	}
 	return next.String()
+}
+
+type notLeaderError struct {
+	advertiseAddr string
+	method        string
+	path          string
+	body          string
+}
+
+func (e *notLeaderError) Error() string {
+	return fmt.Sprintf("k1s API %s %s returned 409: %s", e.method, e.path, e.body)
+}
+
+func parseNotLeader(statusCode int, body []byte) *notLeaderError {
+	if statusCode != http.StatusConflict {
+		return nil
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil
+	}
+	if strv(payload["error"]) != "not_leader" {
+		return nil
+	}
+	return &notLeaderError{advertiseAddr: strv(payload["advertise_addr"])}
+}
+
+func strv(v any) string {
+	if value, ok := v.(string); ok {
+		return value
+	}
+	return ""
 }

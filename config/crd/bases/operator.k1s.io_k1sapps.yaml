@@ -119,6 +119,8 @@ spec:
                 type: array
               endpoint:
                 type: string
+              image:
+                type: string
               lastSyncTime:
                 format: date-time
                 type: string
@@ -129,6 +131,20 @@ spec:
                 type: string
               ready:
                 type: boolean
+              replicas:
+                properties:
+                  desired:
+                    format: int32
+                    type: integer
+                  live:
+                    format: int32
+                    type: integer
+                  ready:
+                    format: int32
+                    type: integer
+                type: object
+              revision:
+                type: string
             type: object
         type: object
     served: true

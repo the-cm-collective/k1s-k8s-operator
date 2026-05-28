@@ -11,6 +11,7 @@ type AppStatus struct {
 	ReadyReplicas   int32
 	LiveReplicas    int32
 	Revision        string
+	RevisionStatus  string
 	Image           string
 	IngressHost     string
 	IngressPath     string
@@ -37,6 +38,7 @@ func ParseAppStatus(payload map[string]any) AppStatus {
 		ReadyReplicas:   i32(payload["ready_replicas"]),
 		LiveReplicas:    i32(payload["live_replicas"]),
 		Revision:        str(payload["revision"]),
+		RevisionStatus:  str(payload["revision_status"]),
 		Image:           str(payload["image"]),
 		IngressHost:     str(payload["ingress_host"]),
 		IngressPath:     str(payload["ingress_path"]),

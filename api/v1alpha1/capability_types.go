@@ -24,6 +24,9 @@ type K1sAppStatus struct {
 	Ready              bool               `json:"ready,omitempty"`
 	Phase              string             `json:"phase,omitempty"`
 	Endpoint           string             `json:"endpoint,omitempty"`
+	Replicas           K1sReplicaSummary  `json:"replicas,omitempty"`
+	Image              string             `json:"image,omitempty"`
+	Revision           string             `json:"revision,omitempty"`
 	LastSyncTime       *metav1.Time       `json:"lastSyncTime,omitempty"`
 	Conditions         []metav1.Condition `json:"conditions,omitempty"`
 }

@@ -46,7 +46,7 @@ func (r *K1sAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	if !app.ObjectMeta.DeletionTimestamp.IsZero() {
 		if containsString(app.Finalizers, capabilityFinalizer) {
 			if app.Spec.DeletePolicy != operatorv1alpha1.K1sDeletePolicyOrphan {
-				_, _ = api.DeleteApp(ctx, firstNonEmpty(app.Status.AppName, app.Name), true)
+				_, _ = api.DeleteApp(ctx, appDeleteName(app), true)
 			}
 			app.Finalizers = removeString(app.Finalizers, capabilityFinalizer)
 			return ctrl.Result{}, r.Update(ctx, app)
@@ -58,11 +58,19 @@ func (r *K1sAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		if err := r.Update(ctx, app); err != nil {
 			return ctrl.Result{}, err
 		}
+		return ctrl.Result{Requeue: true}, nil
 	}
 	raw := app.Spec.Manifest.Raw
 	if len(raw) == 0 {
 		app.Status.ObservedGeneration = app.Generation
 		setCondition(&app.Status.Conditions, operatorv1alpha1.ConditionAccepted, metav1.ConditionFalse, operatorv1alpha1.ReasonInvalid, "manifest is required", app.Generation)
+		return ctrl.Result{}, r.Status().Update(ctx, app)
+	}
+	if kind := kindFromManifest(raw); kind != "Deployment" {
+		app.Status.ObservedGeneration = app.Generation
+		app.Status.AppName = appNameFromManifest(raw)
+		setCondition(&app.Status.Conditions, operatorv1alpha1.ConditionAccepted, metav1.ConditionFalse, operatorv1alpha1.ReasonInvalid, fmt.Sprintf("K1sApp supports kind Deployment, got %q", kind), app.Generation)
+		setCondition(&app.Status.Conditions, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonInvalid, "resource is not ready", app.Generation)
 		return ctrl.Result{}, r.Status().Update(ctx, app)
 	}
 	result, err := api.Apply(ctx, raw)
@@ -75,9 +83,18 @@ func (r *K1sAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	setCondition(&app.Status.Conditions, operatorv1alpha1.ConditionAccepted, metav1.ConditionTrue, operatorv1alpha1.ReasonReady, "K1sApp accepted by operator", app.Generation)
 	if err != nil {
 		setCondition(&app.Status.Conditions, operatorv1alpha1.ConditionApplied, metav1.ConditionFalse, operatorv1alpha1.ReasonUnavailable, err.Error(), app.Generation)
+		setCondition(&app.Status.Conditions, operatorv1alpha1.ConditionAppReady, metav1.ConditionFalse, operatorv1alpha1.ReasonUnavailable, "manifest was not applied", app.Generation)
 		app.Status.Ready = false
 	} else {
 		setCondition(&app.Status.Conditions, operatorv1alpha1.ConditionApplied, metav1.ConditionTrue, operatorv1alpha1.ReasonApplied, "manifest applied to k1s", app.Generation)
+		namespace, name := appRefFromManifest(raw)
+		if observed, statusErr := api.AppStatus(ctx, namespace, name); statusErr == nil {
+			applyObservedAppStatus(&app.Status, observed)
+			setCondition(&app.Status.Conditions, operatorv1alpha1.ConditionAppReady, conditionStatus(app.Status.Ready), reasonForBool(app.Status.Ready), appReadyMessage(app.Status.Ready), app.Generation)
+		} else {
+			app.Status.Ready = false
+			setCondition(&app.Status.Conditions, operatorv1alpha1.ConditionAppReady, metav1.ConditionFalse, operatorv1alpha1.ReasonUnavailable, "manifest applied but app status could not be read: "+statusErr.Error(), app.Generation)
+		}
 	}
 	setCondition(&app.Status.Conditions, operatorv1alpha1.ConditionReady, conditionStatus(app.Status.Ready), reasonForBool(app.Status.Ready), readyMessage(app.Status.Ready), app.Generation)
 	_ = cluster
@@ -141,6 +158,7 @@ func (r *K1sInferenceEndpointReconciler) Reconcile(ctx context.Context, req ctrl
 		if err := r.Update(ctx, endpoint); err != nil {
 			return ctrl.Result{}, err
 		}
+		return ctrl.Result{Requeue: true}, nil
 	}
 	manifest, err := buildInferenceManifest(endpoint)
 	if err != nil {
@@ -306,6 +324,14 @@ func kindFromManifest(raw []byte) string {
 }
 
 func appNameFromManifest(raw []byte) string {
+	namespace, name := appRefFromManifest(raw)
+	if namespace != "" && namespace != "default" {
+		return namespace + "--" + name
+	}
+	return name
+}
+
+func appRefFromManifest(raw []byte) (string, string) {
 	var payload struct {
 		Metadata struct {
 			Name      string `json:"name"`
@@ -313,10 +339,39 @@ func appNameFromManifest(raw []byte) string {
 		} `json:"metadata"`
 	}
 	_ = json.Unmarshal(raw, &payload)
-	if payload.Metadata.Namespace != "" && payload.Metadata.Namespace != "default" {
-		return payload.Metadata.Namespace + "--" + payload.Metadata.Name
+	namespace := payload.Metadata.Namespace
+	if namespace == "" {
+		namespace = "default"
 	}
-	return payload.Metadata.Name
+	return namespace, payload.Metadata.Name
+}
+
+func appDeleteName(app *operatorv1alpha1.K1sApp) string {
+	return firstNonEmpty(app.Status.AppName, appNameFromManifest(app.Spec.Manifest.Raw), app.Name)
+}
+
+func applyObservedAppStatus(status *operatorv1alpha1.K1sAppStatus, observed k1sclient.AppStatus) {
+	status.AppName = firstNonEmpty(observed.AppName, status.AppName)
+	status.Ready = observed.Ready
+	status.Phase = firstNonEmpty(observed.RevisionStatus, status.Phase)
+	status.Endpoint = observedEndpoint(observed)
+	status.Replicas = operatorv1alpha1.K1sReplicaSummary{
+		Desired: observed.DesiredReplicas,
+		Ready:   observed.ReadyReplicas,
+		Live:    observed.LiveReplicas,
+	}
+	status.Image = observed.Image
+	status.Revision = observed.Revision
+}
+
+func observedEndpoint(observed k1sclient.AppStatus) string {
+	if observed.IngressHost == "" {
+		return ""
+	}
+	if observed.IngressPath == "" || observed.IngressPath == "/" {
+		return observed.IngressHost
+	}
+	return observed.IngressHost + observed.IngressPath
 }
 
 func strMap(payload map[string]any, key string) string {

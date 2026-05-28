@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	operatorv1alpha1 "github.com/k1s-project/k1s-operator/api/v1alpha1"
+	k1sclient "github.com/k1s-project/k1s-operator/internal/k1s"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -48,5 +49,38 @@ func TestBuildInferenceManifestCellSet(t *testing.T) {
 	}
 	if kindFromManifest(raw) != "InferenceCellSet" {
 		t.Fatalf("expected InferenceCellSet manifest: %s", raw)
+	}
+}
+
+func TestAppNameFromManifestNamespaces(t *testing.T) {
+	raw := []byte(`{"kind":"Deployment","metadata":{"namespace":"apps","name":"echo"}}`)
+	if got := appNameFromManifest(raw); got != "apps--echo" {
+		t.Fatalf("unexpected app name: %q", got)
+	}
+	namespace, name := appRefFromManifest([]byte(`{"kind":"Deployment","metadata":{"name":"echo"}}`))
+	if namespace != "default" || name != "echo" {
+		t.Fatalf("unexpected ref: %s/%s", namespace, name)
+	}
+}
+
+func TestApplyObservedAppStatus(t *testing.T) {
+	status := operatorv1alpha1.K1sAppStatus{AppName: "fallback", Phase: "accepted"}
+	applyObservedAppStatus(&status, k1sclient.AppStatus{
+		AppName:         "apps--echo",
+		Ready:           true,
+		DesiredReplicas: 2,
+		ReadyReplicas:   2,
+		LiveReplicas:    2,
+		Revision:        "7",
+		RevisionStatus:  "ready",
+		Image:           "example/echo:latest",
+		IngressHost:     "echo.example.test",
+		IngressPath:     "/api",
+	})
+	if !status.Ready || status.Phase != "ready" || status.Endpoint != "echo.example.test/api" {
+		t.Fatalf("unexpected status: %#v", status)
+	}
+	if status.Replicas.Ready != 2 || status.Image == "" || status.Revision != "7" {
+		t.Fatalf("missing observed fields: %#v", status)
 	}
 }
