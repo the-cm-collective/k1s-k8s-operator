@@ -19,6 +19,8 @@ import (
 
 const capabilityFinalizer = "operator.k1s.io/capability-cleanup"
 
+var DefaultResourceSetAllowedKinds = []string{"Deployment", "InferenceCell", "InferenceCellSet"}
+
 type K1sAppReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
@@ -300,7 +302,8 @@ func (r *K1sInferenceEndpointReconciler) SetupWithManager(mgr ctrl.Manager) erro
 
 type K1sResourceSetReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme       *runtime.Scheme
+	AllowedKinds []string
 }
 
 // +kubebuilder:rbac:groups=operator.k1s.io,resources=k1sresourcesets,verbs=get;list;watch;update;patch
@@ -347,9 +350,19 @@ func (r *K1sResourceSetReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 		return ctrl.Result{Requeue: true}, nil
 	}
-	allowed := set.Spec.AllowedKinds
-	if len(allowed) == 0 {
-		allowed = []string{"Deployment", "InferenceCell", "InferenceCellSet"}
+	allowed, policyErr := r.allowedKindsFor(set)
+	if policyErr != nil {
+		now := metav1.Now()
+		set.Status.ObservedGeneration = set.Generation
+		set.Status.LastSyncTime = &now
+		set.Status.Ready = false
+		set.Status.Applied = 0
+		setCondition(&set.Status.Conditions, operatorv1alpha1.ConditionPolicyAllowed, metav1.ConditionFalse, operatorv1alpha1.ReasonDenied, policyErr.Error(), set.Generation)
+		setCondition(&set.Status.Conditions, operatorv1alpha1.ConditionApplied, metav1.ConditionFalse, operatorv1alpha1.ReasonDenied, policyErr.Error(), set.Generation)
+		setCondition(&set.Status.Conditions, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonDenied, "resource is not ready", set.Generation)
+		return ctrl.Result{}, patchStatus(ctx, r.Client, set, func(obj client.Object) {
+			obj.(*operatorv1alpha1.K1sResourceSet).Status = set.Status
+		})
 	}
 	var applied int32
 	var firstErr error
@@ -362,7 +375,7 @@ func (r *K1sResourceSetReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			firstErr = err
 			break
 		}
-		if !slices.Contains(allowed, ref.Kind) {
+		if !allowed[ref.Kind] {
 			firstErr = fmt.Errorf("kind %q is not allowed by this K1sResourceSet", ref.Kind)
 			break
 		}
@@ -420,6 +433,49 @@ func (r *K1sResourceSetReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 func (r *K1sResourceSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).For(&operatorv1alpha1.K1sResourceSet{}).Complete(r)
+}
+
+func (r *K1sResourceSetReconciler) allowedKindsFor(set *operatorv1alpha1.K1sResourceSet) (map[string]bool, error) {
+	cap := normalizeKindList(r.AllowedKinds)
+	if len(cap) == 0 {
+		cap = normalizeKindList(DefaultResourceSetAllowedKinds)
+	}
+	capSet := kindSet(cap)
+	requested := normalizeKindList(set.Spec.AllowedKinds)
+	for _, kind := range requested {
+		if !capSet[kind] {
+			return nil, fmt.Errorf("kind %q is outside the operator ResourceSet allowed-kind cap", kind)
+		}
+	}
+	if len(requested) == 0 {
+		return capSet, nil
+	}
+	return kindSet(requested), nil
+}
+
+func normalizeKindList(kinds []string) []string {
+	var out []string
+	seen := map[string]struct{}{}
+	for _, kind := range kinds {
+		kind = strings.TrimSpace(kind)
+		if kind == "" {
+			continue
+		}
+		if _, ok := seen[kind]; ok {
+			continue
+		}
+		out = append(out, kind)
+		seen[kind] = struct{}{}
+	}
+	return out
+}
+
+func kindSet(kinds []string) map[string]bool {
+	out := map[string]bool{}
+	for _, kind := range kinds {
+		out[kind] = true
+	}
+	return out
 }
 
 func buildInferenceManifest(endpoint *operatorv1alpha1.K1sInferenceEndpoint) ([]byte, error) {

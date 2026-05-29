@@ -20,6 +20,11 @@ import (
 
 var scheme = runtime.NewScheme()
 
+const (
+	defaultMetricsBindAddress = "127.0.0.1:8080"
+	defaultProbeBindAddress   = ":8081"
+)
+
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(operatorv1alpha1.AddToScheme(scheme))
@@ -28,10 +33,12 @@ func init() {
 func main() {
 	var metricsAddr string
 	var probeAddr string
+	var resourceSetAllowedKinds string
 	var enableLeaderElection bool
 
-	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
-	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
+	flag.StringVar(&metricsAddr, "metrics-bind-address", defaultMetricsBindAddress, "The address the metric endpoint binds to.")
+	flag.StringVar(&probeAddr, "health-probe-bind-address", defaultProbeBindAddress, "The address the probe endpoint binds to.")
+	flag.StringVar(&resourceSetAllowedKinds, "resourceset-allowed-kinds", strings.Join(controller.DefaultResourceSetAllowedKinds, ","), "Comma-separated k1s resource kinds that K1sResourceSet may manage.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false, "Enable leader election for controller manager.")
 	opts := zap.Options{Development: false}
 	opts.BindFlags(flag.CommandLine)
@@ -74,7 +81,7 @@ func main() {
 		ctrl.Log.Error(err, "unable to create K1sInferenceEndpoint controller")
 		os.Exit(1)
 	}
-	if err := (&controller.K1sResourceSetReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme()}).SetupWithManager(mgr); err != nil {
+	if err := (&controller.K1sResourceSetReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme(), AllowedKinds: csvValues(resourceSetAllowedKinds)}).SetupWithManager(mgr); err != nil {
 		ctrl.Log.Error(err, "unable to create K1sResourceSet controller")
 		os.Exit(1)
 	}
@@ -96,12 +103,22 @@ func main() {
 }
 
 func watchNamespaces(raw string) []string {
-	var namespaces []string
-	for _, namespace := range strings.Split(raw, ",") {
-		namespace = strings.TrimSpace(namespace)
-		if namespace != "" {
-			namespaces = append(namespaces, namespace)
+	return csvValues(raw)
+}
+
+func csvValues(raw string) []string {
+	var values []string
+	seen := map[string]struct{}{}
+	for _, value := range strings.Split(raw, ",") {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
 		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		values = append(values, value)
+		seen[value] = struct{}{}
 	}
-	return namespaces
+	return values
 }
