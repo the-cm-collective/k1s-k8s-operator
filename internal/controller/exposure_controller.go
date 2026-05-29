@@ -39,26 +39,31 @@ func (r *K1sExposureReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 		return ctrl.Result{}, err
 	}
+	patchExposureStatus := func() error {
+		return patchStatus(ctx, r.Client, exposure, func(obj client.Object) {
+			obj.(*operatorv1alpha1.K1sExposure).Status = exposure.Status
+		})
+	}
 	cluster := &operatorv1alpha1.K1sCluster{}
 	clusterNamespace := exposure.Spec.ClusterRef.NamespaceOr(exposure.Namespace)
 	if err := r.Get(ctx, types.NamespacedName{Name: exposure.Spec.ClusterRef.Name, Namespace: clusterNamespace}, cluster); err != nil {
 		exposure.Status.ObservedGeneration = exposure.Generation
 		setCondition(&exposure.Status.Conditions, operatorv1alpha1.ConditionClusterReady, metav1.ConditionFalse, operatorv1alpha1.ReasonMissing, err.Error(), exposure.Generation)
 		setCondition(&exposure.Status.Conditions, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonUnavailable, "referenced cluster is not ready", exposure.Generation)
-		return ctrl.Result{}, r.Status().Update(ctx, exposure)
+		return ctrl.Result{}, patchExposureStatus()
 	}
 	creds, err := loadCredentials(ctx, r.Client, cluster.Namespace, cluster.Spec.AuthSecretRef)
 	if err != nil {
 		exposure.Status.ObservedGeneration = exposure.Generation
 		setCondition(&exposure.Status.Conditions, operatorv1alpha1.ConditionClusterReady, metav1.ConditionFalse, operatorv1alpha1.ReasonMissing, err.Error(), exposure.Generation)
 		setCondition(&exposure.Status.Conditions, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonUnavailable, "cluster credentials are not available", exposure.Generation)
-		return ctrl.Result{}, r.Status().Update(ctx, exposure)
+		return ctrl.Result{}, patchExposureStatus()
 	}
 	api, err := k1sclient.NewClient(cluster.Spec.Controller.URL, k1sclient.WithBearerToken(creds.readToken), k1sclient.WithCABundle(creds.caBundle))
 	if err != nil {
 		exposure.Status.ObservedGeneration = exposure.Generation
 		setCondition(&exposure.Status.Conditions, operatorv1alpha1.ConditionClusterReady, metav1.ConditionFalse, operatorv1alpha1.ReasonInvalid, err.Error(), exposure.Generation)
-		return ctrl.Result{}, r.Status().Update(ctx, exposure)
+		return ctrl.Result{}, patchExposureStatus()
 	}
 	appStatus, appErr := api.AppStatus(ctx, exposure.Spec.AppRef.NamespaceOrDefault(), exposure.Spec.AppRef.Name)
 	appFound := appErr == nil
@@ -101,7 +106,7 @@ func (r *K1sExposureReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	setCondition(&exposure.Status.Conditions, operatorv1alpha1.ConditionClusterReady, metav1.ConditionTrue, operatorv1alpha1.ReasonReady, "referenced cluster loaded", exposure.Generation)
 	ready := appFound && appReady && proxyReady
 	setCondition(&exposure.Status.Conditions, operatorv1alpha1.ConditionReady, conditionStatus(ready), reasonForBool(ready), readyMessage(ready), exposure.Generation)
-	return ctrl.Result{RequeueAfter: pollInterval(cluster.Spec.PollIntervalSeconds)}, r.Status().Update(ctx, exposure)
+	return ctrl.Result{RequeueAfter: pollInterval(cluster.Spec.PollIntervalSeconds)}, patchExposureStatus()
 }
 
 func (r *K1sExposureReconciler) reconcileService(ctx context.Context, cluster *operatorv1alpha1.K1sCluster, exposure *operatorv1alpha1.K1sExposure) error {
@@ -171,8 +176,10 @@ func (r *K1sExposureReconciler) reconcileMirror(ctx context.Context, cluster *op
 	if err != nil {
 		return err
 	}
-	mirror.Status = mirrorStatusFromApp(mirror, appStatus, appFound)
-	return r.Status().Update(ctx, mirror)
+	return patchStatus(ctx, r.Client, mirror, func(obj client.Object) {
+		current := obj.(*operatorv1alpha1.K1sAppMirror)
+		current.Status = mirrorStatusFromApp(current, appStatus, appFound)
+	})
 }
 
 func (r *K1sExposureReconciler) SetupWithManager(mgr ctrl.Manager) error {

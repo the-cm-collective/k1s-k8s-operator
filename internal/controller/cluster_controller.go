@@ -81,8 +81,9 @@ func (r *K1sClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 	ready := status.ControllerAvailable && status.ProxyReady && err == nil
 	setCondition(&status.Conditions, operatorv1alpha1.ConditionReady, conditionStatus(ready), reasonForBool(ready), clusterReadyMessage(ready), cluster.Generation)
-	cluster.Status = status
-	if updateErr := r.Status().Update(ctx, cluster); updateErr != nil {
+	if updateErr := patchStatus(ctx, r.Client, cluster, func(obj client.Object) {
+		obj.(*operatorv1alpha1.K1sCluster).Status = status
+	}); updateErr != nil {
 		logger.Error(updateErr, "unable to update K1sCluster status")
 		return ctrl.Result{}, updateErr
 	}

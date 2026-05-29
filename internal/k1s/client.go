@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -182,13 +183,30 @@ func (c *Client) postJSON(ctx context.Context, endpoint string, payload any, out
 }
 
 func (c *Client) doJSONWithLeaderRetry(ctx context.Context, method, endpoint string, body []byte, out any) error {
-	err := c.doJSONRequest(ctx, method, c.url(endpoint), body, out)
+	originalURL := c.url(endpoint)
+	err := c.doJSONRequest(ctx, method, originalURL, body, out)
 	if redirect, ok := err.(*notLeaderError); ok && redirect.advertiseAddr != "" {
 		leaderBase, parseErr := url.Parse(redirect.advertiseAddr)
 		if parseErr != nil {
 			return err
 		}
-		return c.doJSONRequest(ctx, method, buildURL(leaderBase, endpoint), body, out)
+		leaderURL := buildURL(leaderBase, endpoint)
+		leaderErr := c.doJSONRequest(ctx, method, leaderURL, body, out)
+		if leaderErr == nil {
+			return nil
+		}
+		timer := time.NewTimer(200 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+		fallbackErr := c.doJSONRequest(ctx, method, originalURL, body, out)
+		if fallbackErr == nil {
+			return nil
+		}
+		return fmt.Errorf("k1s leader retry failed: advertised %s: %w; service fallback %s: %v", leaderBase.Redacted(), leaderErr, c.baseURL.Redacted(), fallbackErr)
 	}
 	return err
 }
@@ -221,12 +239,28 @@ func (c *Client) doJSONRequest(ctx context.Context, method, rawURL string, body 
 			redirect.body = strings.TrimSpace(string(respBody))
 			return redirect
 		}
-		return fmt.Errorf("k1s API %s %s returned %d: %s", req.Method, req.URL.Path, resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return &APIError{Method: req.Method, Path: req.URL.Path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(respBody))}
 	}
 	if out == nil || len(respBody) == 0 {
 		return nil
 	}
 	return json.Unmarshal(respBody, out)
+}
+
+type APIError struct {
+	Method     string
+	Path       string
+	StatusCode int
+	Body       string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("k1s API %s %s returned %d: %s", e.Method, e.Path, e.StatusCode, e.Body)
+}
+
+func IsNotFound(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound
 }
 
 func (c *Client) url(endpoint string) string {

@@ -126,3 +126,50 @@ func TestApplyRetriesAdvertisedLeader(t *testing.T) {
 		t.Fatalf("leader retry did not succeed: hit=%v result=%#v", leaderHit, result)
 	}
 }
+
+func TestApplyFallsBackToServiceURLWhenAdvertisedLeaderUnreachable(t *testing.T) {
+	var hits int
+	follower := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "application/json")
+		if hits == 1 {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"error":"not_leader","advertise_addr":"http://127.0.0.1:1"}`))
+			return
+		}
+		if r.URL.Path != "/apply" {
+			t.Fatalf("unexpected fallback path: %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"app":"demo","status":"ready"}`))
+	}))
+	defer follower.Close()
+
+	client, err := NewClient(follower.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.Apply(context.Background(), []byte(`{"apiVersion":"ae.dev/v1alpha1","kind":"Deployment","metadata":{"name":"demo"},"spec":{"image":"busybox"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hits != 2 || result["status"] != "ready" {
+		t.Fatalf("expected one fallback retry, hits=%d result=%#v", hits, result)
+	}
+}
+
+func TestIsNotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"not found"}`))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.AppStatus(context.Background(), "default", "missing")
+	if !IsNotFound(err) {
+		t.Fatalf("expected IsNotFound for 404, got %v", err)
+	}
+}

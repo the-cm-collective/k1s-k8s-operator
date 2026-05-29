@@ -41,21 +41,28 @@ func (r *K1sAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	if err != nil {
 		app.Status.ObservedGeneration = app.Generation
 		setCondition(&app.Status.Conditions, operatorv1alpha1.ConditionCredentialsValid, metav1.ConditionFalse, operatorv1alpha1.ReasonMissing, err.Error(), app.Generation)
-		return ctrl.Result{}, r.Status().Update(ctx, app)
+		return ctrl.Result{}, patchStatus(ctx, r.Client, app, func(obj client.Object) {
+			obj.(*operatorv1alpha1.K1sApp).Status = app.Status
+		})
 	}
 	if !app.ObjectMeta.DeletionTimestamp.IsZero() {
 		if containsString(app.Finalizers, capabilityFinalizer) {
 			if app.Spec.DeletePolicy != operatorv1alpha1.K1sDeletePolicyOrphan {
-				_, _ = api.DeleteApp(ctx, appDeleteName(app), true)
+				if _, err := api.DeleteApp(ctx, appDeleteName(app), true); err != nil && !k1sclient.IsNotFound(err) {
+					app.Status.ObservedGeneration = app.Generation
+					setCondition(&app.Status.Conditions, operatorv1alpha1.ConditionApplied, metav1.ConditionFalse, operatorv1alpha1.ReasonUnavailable, "failed to delete k1s app: "+err.Error(), app.Generation)
+					_ = patchStatus(ctx, r.Client, app, func(obj client.Object) {
+						obj.(*operatorv1alpha1.K1sApp).Status = app.Status
+					})
+					return ctrl.Result{}, err
+				}
 			}
-			app.Finalizers = removeString(app.Finalizers, capabilityFinalizer)
-			return ctrl.Result{}, r.Update(ctx, app)
+			return ctrl.Result{}, patchFinalizers(ctx, r.Client, app, removeString(app.Finalizers, capabilityFinalizer))
 		}
 		return ctrl.Result{}, nil
 	}
 	if !containsString(app.Finalizers, capabilityFinalizer) {
-		app.Finalizers = append(app.Finalizers, capabilityFinalizer)
-		if err := r.Update(ctx, app); err != nil {
+		if err := patchFinalizers(ctx, r.Client, app, append(app.Finalizers, capabilityFinalizer)); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{Requeue: true}, nil
@@ -64,16 +71,43 @@ func (r *K1sAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	if len(raw) == 0 {
 		app.Status.ObservedGeneration = app.Generation
 		setCondition(&app.Status.Conditions, operatorv1alpha1.ConditionAccepted, metav1.ConditionFalse, operatorv1alpha1.ReasonInvalid, "manifest is required", app.Generation)
-		return ctrl.Result{}, r.Status().Update(ctx, app)
+		return ctrl.Result{}, patchStatus(ctx, r.Client, app, func(obj client.Object) {
+			obj.(*operatorv1alpha1.K1sApp).Status = app.Status
+		})
 	}
 	if kind := kindFromManifest(raw); kind != "Deployment" {
 		app.Status.ObservedGeneration = app.Generation
 		app.Status.AppName = appNameFromManifest(raw)
 		setCondition(&app.Status.Conditions, operatorv1alpha1.ConditionAccepted, metav1.ConditionFalse, operatorv1alpha1.ReasonInvalid, fmt.Sprintf("K1sApp supports kind Deployment, got %q", kind), app.Generation)
 		setCondition(&app.Status.Conditions, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonInvalid, "resource is not ready", app.Generation)
-		return ctrl.Result{}, r.Status().Update(ctx, app)
+		return ctrl.Result{}, patchStatus(ctx, r.Client, app, func(obj client.Object) {
+			obj.(*operatorv1alpha1.K1sApp).Status = app.Status
+		})
 	}
-	result, err := api.Apply(ctx, raw)
+	manifestHash := hashBytes(raw)
+	shouldApply := lastAppliedHash(app) != manifestHash
+	namespace, name := appRefFromManifest(raw)
+	var observed k1sclient.AppStatus
+	var statusErr error
+	var observedOK bool
+	if !shouldApply {
+		observed, statusErr = api.AppStatus(ctx, namespace, name)
+		observedOK = statusErr == nil
+		if k1sclient.IsNotFound(statusErr) {
+			shouldApply = true
+			statusErr = nil
+		}
+	}
+	var result map[string]any
+	var applyErr error
+	if shouldApply {
+		result, applyErr = api.Apply(ctx, raw)
+		if applyErr == nil {
+			if patchErr := patchLastAppliedHash(ctx, r.Client, app, manifestHash); patchErr != nil {
+				return ctrl.Result{}, patchErr
+			}
+		}
+	}
 	now := metav1.Now()
 	app.Status.ObservedGeneration = app.Generation
 	app.Status.LastSyncTime = &now
@@ -81,14 +115,21 @@ func (r *K1sAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	app.Status.Phase = firstNonEmpty(strMap(result, "status"), "Applied")
 	app.Status.Ready = strings.EqualFold(app.Status.Phase, "ready") || strings.EqualFold(app.Status.Phase, "live")
 	setCondition(&app.Status.Conditions, operatorv1alpha1.ConditionAccepted, metav1.ConditionTrue, operatorv1alpha1.ReasonReady, "K1sApp accepted by operator", app.Generation)
-	if err != nil {
-		setCondition(&app.Status.Conditions, operatorv1alpha1.ConditionApplied, metav1.ConditionFalse, operatorv1alpha1.ReasonUnavailable, err.Error(), app.Generation)
+	if applyErr != nil {
+		setCondition(&app.Status.Conditions, operatorv1alpha1.ConditionApplied, metav1.ConditionFalse, operatorv1alpha1.ReasonUnavailable, applyErr.Error(), app.Generation)
 		setCondition(&app.Status.Conditions, operatorv1alpha1.ConditionAppReady, metav1.ConditionFalse, operatorv1alpha1.ReasonUnavailable, "manifest was not applied", app.Generation)
 		app.Status.Ready = false
 	} else {
-		setCondition(&app.Status.Conditions, operatorv1alpha1.ConditionApplied, metav1.ConditionTrue, operatorv1alpha1.ReasonApplied, "manifest applied to k1s", app.Generation)
-		namespace, name := appRefFromManifest(raw)
-		if observed, statusErr := api.AppStatus(ctx, namespace, name); statusErr == nil {
+		appliedMessage := "manifest already applied to k1s"
+		if shouldApply {
+			appliedMessage = "manifest applied to k1s"
+		}
+		setCondition(&app.Status.Conditions, operatorv1alpha1.ConditionApplied, metav1.ConditionTrue, operatorv1alpha1.ReasonApplied, appliedMessage, app.Generation)
+		if !observedOK {
+			observed, statusErr = api.AppStatus(ctx, namespace, name)
+			observedOK = statusErr == nil
+		}
+		if observedOK {
 			applyObservedAppStatus(&app.Status, observed)
 			setCondition(&app.Status.Conditions, operatorv1alpha1.ConditionAppReady, conditionStatus(app.Status.Ready), reasonForBool(app.Status.Ready), appReadyMessage(app.Status.Ready), app.Generation)
 		} else {
@@ -97,8 +138,9 @@ func (r *K1sAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		}
 	}
 	setCondition(&app.Status.Conditions, operatorv1alpha1.ConditionReady, conditionStatus(app.Status.Ready), reasonForBool(app.Status.Ready), readyMessage(app.Status.Ready), app.Generation)
-	_ = cluster
-	return ctrl.Result{RequeueAfter: pollInterval(cluster.Spec.PollIntervalSeconds)}, r.Status().Update(ctx, app)
+	return ctrl.Result{RequeueAfter: pollInterval(cluster.Spec.PollIntervalSeconds)}, patchStatus(ctx, r.Client, app, func(obj client.Object) {
+		obj.(*operatorv1alpha1.K1sApp).Status = app.Status
+	})
 }
 
 func (r *K1sAppReconciler) writeClient(ctx context.Context, namespace string, ref operatorv1alpha1.NamespacedNameRef) (*k1sclient.Client, *operatorv1alpha1.K1sCluster, error) {
@@ -144,25 +186,35 @@ func (r *K1sInferenceEndpointReconciler) Reconcile(ctx context.Context, req ctrl
 	if err != nil {
 		endpoint.Status.ObservedGeneration = endpoint.Generation
 		setCondition(&endpoint.Status.Conditions, operatorv1alpha1.ConditionCredentialsValid, metav1.ConditionFalse, operatorv1alpha1.ReasonMissing, err.Error(), endpoint.Generation)
-		return ctrl.Result{}, r.Status().Update(ctx, endpoint)
+		return ctrl.Result{}, patchStatus(ctx, r.Client, endpoint, func(obj client.Object) {
+			obj.(*operatorv1alpha1.K1sInferenceEndpoint).Status = endpoint.Status
+		})
 	}
 	if !endpoint.ObjectMeta.DeletionTimestamp.IsZero() {
 		if containsString(endpoint.Finalizers, capabilityFinalizer) {
 			if endpoint.Spec.DeletePolicy != operatorv1alpha1.K1sDeletePolicyOrphan {
+				var deleteErr error
 				if endpoint.Spec.CellSet != nil {
-					_, _ = api.DeleteInferenceCellSet(ctx, endpoint.Namespace, endpoint.Name)
+					_, deleteErr = api.DeleteInferenceCellSet(ctx, endpoint.Namespace, endpoint.Name)
 				} else {
-					_, _ = api.DeleteInferenceCell(ctx, endpoint.Namespace, endpoint.Name)
+					_, deleteErr = api.DeleteInferenceCell(ctx, endpoint.Namespace, endpoint.Name)
+				}
+				if deleteErr != nil && !k1sclient.IsNotFound(deleteErr) {
+					endpoint.Status.ObservedGeneration = endpoint.Generation
+					endpoint.Status.LastError = deleteErr.Error()
+					setCondition(&endpoint.Status.Conditions, operatorv1alpha1.ConditionApplied, metav1.ConditionFalse, operatorv1alpha1.ReasonUnavailable, "failed to delete k1s inference resource: "+deleteErr.Error(), endpoint.Generation)
+					_ = patchStatus(ctx, r.Client, endpoint, func(obj client.Object) {
+						obj.(*operatorv1alpha1.K1sInferenceEndpoint).Status = endpoint.Status
+					})
+					return ctrl.Result{}, deleteErr
 				}
 			}
-			endpoint.Finalizers = removeString(endpoint.Finalizers, capabilityFinalizer)
-			return ctrl.Result{}, r.Update(ctx, endpoint)
+			return ctrl.Result{}, patchFinalizers(ctx, r.Client, endpoint, removeString(endpoint.Finalizers, capabilityFinalizer))
 		}
 		return ctrl.Result{}, nil
 	}
 	if !containsString(endpoint.Finalizers, capabilityFinalizer) {
-		endpoint.Finalizers = append(endpoint.Finalizers, capabilityFinalizer)
-		if err := r.Update(ctx, endpoint); err != nil {
+		if err := patchFinalizers(ctx, r.Client, endpoint, append(endpoint.Finalizers, capabilityFinalizer)); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{Requeue: true}, nil
@@ -171,9 +223,33 @@ func (r *K1sInferenceEndpointReconciler) Reconcile(ctx context.Context, req ctrl
 	if err != nil {
 		endpoint.Status.ObservedGeneration = endpoint.Generation
 		setCondition(&endpoint.Status.Conditions, operatorv1alpha1.ConditionAccepted, metav1.ConditionFalse, operatorv1alpha1.ReasonInvalid, err.Error(), endpoint.Generation)
-		return ctrl.Result{}, r.Status().Update(ctx, endpoint)
+		return ctrl.Result{}, patchStatus(ctx, r.Client, endpoint, func(obj client.Object) {
+			obj.(*operatorv1alpha1.K1sInferenceEndpoint).Status = endpoint.Status
+		})
 	}
-	result, applyErr := api.Apply(ctx, manifest)
+	manifestHash := hashBytes(manifest)
+	shouldApply := lastAppliedHash(endpoint) != manifestHash
+	var observed k1sclient.InferenceStatus
+	var statusErr error
+	var observedOK bool
+	if !shouldApply {
+		observed, statusErr = inferenceStatusForEndpoint(ctx, api, endpoint)
+		observedOK = statusErr == nil
+		if k1sclient.IsNotFound(statusErr) {
+			shouldApply = true
+			statusErr = nil
+		}
+	}
+	var result map[string]any
+	var applyErr error
+	if shouldApply {
+		result, applyErr = api.Apply(ctx, manifest)
+		if applyErr == nil {
+			if patchErr := patchLastAppliedHash(ctx, r.Client, endpoint, manifestHash); patchErr != nil {
+				return ctrl.Result{}, patchErr
+			}
+		}
+	}
 	now := metav1.Now()
 	endpoint.Status.ObservedGeneration = endpoint.Generation
 	endpoint.Status.LastSyncTime = &now
@@ -195,8 +271,16 @@ func (r *K1sInferenceEndpointReconciler) Reconcile(ctx context.Context, req ctrl
 		setCondition(&endpoint.Status.Conditions, operatorv1alpha1.ConditionApplied, metav1.ConditionFalse, operatorv1alpha1.ReasonUnsupported, "k1s inference CRUD API is not available or rejected the request: "+applyErr.Error(), endpoint.Generation)
 	} else {
 		endpoint.Status.LastError = ""
-		setCondition(&endpoint.Status.Conditions, operatorv1alpha1.ConditionApplied, metav1.ConditionTrue, operatorv1alpha1.ReasonApplied, "inference manifest applied to k1s", endpoint.Generation)
-		if observed, statusErr := inferenceStatusForEndpoint(ctx, api, endpoint); statusErr == nil {
+		appliedMessage := "inference manifest already applied to k1s"
+		if shouldApply {
+			appliedMessage = "inference manifest applied to k1s"
+		}
+		setCondition(&endpoint.Status.Conditions, operatorv1alpha1.ConditionApplied, metav1.ConditionTrue, operatorv1alpha1.ReasonApplied, appliedMessage, endpoint.Generation)
+		if !observedOK {
+			observed, statusErr = inferenceStatusForEndpoint(ctx, api, endpoint)
+			observedOK = statusErr == nil
+		}
+		if observedOK {
 			applyObservedInferenceStatus(&endpoint.Status, observed)
 		} else {
 			endpoint.Status.Ready = false
@@ -205,7 +289,9 @@ func (r *K1sInferenceEndpointReconciler) Reconcile(ctx context.Context, req ctrl
 		}
 	}
 	setCondition(&endpoint.Status.Conditions, operatorv1alpha1.ConditionReady, conditionStatus(endpoint.Status.Ready), reasonForBool(endpoint.Status.Ready), readyMessage(endpoint.Status.Ready), endpoint.Generation)
-	return ctrl.Result{RequeueAfter: pollInterval(cluster.Spec.PollIntervalSeconds)}, r.Status().Update(ctx, endpoint)
+	return ctrl.Result{RequeueAfter: pollInterval(cluster.Spec.PollIntervalSeconds)}, patchStatus(ctx, r.Client, endpoint, func(obj client.Object) {
+		obj.(*operatorv1alpha1.K1sInferenceEndpoint).Status = endpoint.Status
+	})
 }
 
 func (r *K1sInferenceEndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -235,7 +321,9 @@ func (r *K1sResourceSetReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	if err != nil {
 		set.Status.ObservedGeneration = set.Generation
 		setCondition(&set.Status.Conditions, operatorv1alpha1.ConditionCredentialsValid, metav1.ConditionFalse, operatorv1alpha1.ReasonMissing, err.Error(), set.Generation)
-		return ctrl.Result{}, r.Status().Update(ctx, set)
+		return ctrl.Result{}, patchStatus(ctx, r.Client, set, func(obj client.Object) {
+			obj.(*operatorv1alpha1.K1sResourceSet).Status = set.Status
+		})
 	}
 	allowed := set.Spec.AllowedKinds
 	if len(allowed) == 0 {
@@ -243,17 +331,30 @@ func (r *K1sResourceSetReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 	var applied int32
 	var firstErr error
+	rawManifests := make([][]byte, 0, len(set.Spec.Manifests))
+	for _, manifest := range set.Spec.Manifests {
+		rawManifests = append(rawManifests, manifest.Raw)
+	}
+	manifestHash := hashManifestSet(rawManifests)
+	shouldApply := lastAppliedHash(set) != manifestHash
 	for _, manifest := range set.Spec.Manifests {
 		kind := kindFromManifest(manifest.Raw)
 		if !slices.Contains(allowed, kind) {
 			firstErr = fmt.Errorf("kind %q is not allowed by this K1sResourceSet", kind)
 			break
 		}
-		if _, err := api.Apply(ctx, manifest.Raw); err != nil {
-			firstErr = err
-			break
+		if shouldApply {
+			if _, err := api.Apply(ctx, manifest.Raw); err != nil {
+				firstErr = err
+				break
+			}
 		}
 		applied++
+	}
+	if firstErr == nil && shouldApply {
+		if err := patchLastAppliedHash(ctx, r.Client, set, manifestHash); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 	now := metav1.Now()
 	set.Status.ObservedGeneration = set.Generation
@@ -264,11 +365,17 @@ func (r *K1sResourceSetReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		setCondition(&set.Status.Conditions, operatorv1alpha1.ConditionPolicyAllowed, metav1.ConditionFalse, operatorv1alpha1.ReasonDenied, firstErr.Error(), set.Generation)
 		setCondition(&set.Status.Conditions, operatorv1alpha1.ConditionApplied, metav1.ConditionFalse, operatorv1alpha1.ReasonUnavailable, firstErr.Error(), set.Generation)
 	} else {
+		appliedMessage := "resource set already applied to k1s"
+		if shouldApply {
+			appliedMessage = "resource set applied to k1s"
+		}
 		setCondition(&set.Status.Conditions, operatorv1alpha1.ConditionPolicyAllowed, metav1.ConditionTrue, operatorv1alpha1.ReasonReady, "all manifest kinds are allowed", set.Generation)
-		setCondition(&set.Status.Conditions, operatorv1alpha1.ConditionApplied, metav1.ConditionTrue, operatorv1alpha1.ReasonApplied, "resource set applied to k1s", set.Generation)
+		setCondition(&set.Status.Conditions, operatorv1alpha1.ConditionApplied, metav1.ConditionTrue, operatorv1alpha1.ReasonApplied, appliedMessage, set.Generation)
 	}
 	setCondition(&set.Status.Conditions, operatorv1alpha1.ConditionReady, conditionStatus(set.Status.Ready), reasonForBool(set.Status.Ready), readyMessage(set.Status.Ready), set.Generation)
-	return ctrl.Result{RequeueAfter: pollInterval(cluster.Spec.PollIntervalSeconds)}, r.Status().Update(ctx, set)
+	return ctrl.Result{RequeueAfter: pollInterval(cluster.Spec.PollIntervalSeconds)}, patchStatus(ctx, r.Client, set, func(obj client.Object) {
+		obj.(*operatorv1alpha1.K1sResourceSet).Status = set.Status
+	})
 }
 
 func (r *K1sResourceSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
