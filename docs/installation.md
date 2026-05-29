@@ -5,7 +5,7 @@ This guide installs the operator with namespace-scoped RBAC. Use this path for p
 ## Prerequisites
 
 - Kubernetes 1.27 or newer.
-- `kubectl`, `kustomize`, and the Go toolchain used by `make verify`.
+- `kubectl`, `kustomize`, and Go 1.25 or newer for `make verify`.
 - A reachable k1s controller API URL.
 - k1s read token for discovery-only resources.
 - k1s write token only when enabling `K1sApp`, `K1sInferenceEndpoint`, or `K1sResourceSet`.

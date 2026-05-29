@@ -73,6 +73,7 @@ Production installs should use HTTPS k1s controller URLs with a `ca.crt` bundle 
 ## Documentation
 
 - [Installation guide](docs/installation.md)
+- [Public early-dev readiness](docs/public-readiness.md)
 - [MicroK8s dev-a operations guide](docs/microk8s-dev-a-ops.md)
 - [Security and RBAC guide](docs/security-rbac.md)
 - [Troubleshooting guide](docs/troubleshooting.md)
