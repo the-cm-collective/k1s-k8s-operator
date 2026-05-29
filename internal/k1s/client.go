@@ -16,6 +16,11 @@ import (
 	"time"
 )
 
+const (
+	leaderServiceFallbackAttempts = 5
+	leaderRetryBackoff            = 200 * time.Millisecond
+)
+
 type Client struct {
 	baseURL *url.URL
 	token   string
@@ -185,30 +190,44 @@ func (c *Client) postJSON(ctx context.Context, endpoint string, payload any, out
 func (c *Client) doJSONWithLeaderRetry(ctx context.Context, method, endpoint string, body []byte, out any) error {
 	originalURL := c.url(endpoint)
 	err := c.doJSONRequest(ctx, method, originalURL, body, out)
-	if redirect, ok := err.(*notLeaderError); ok && redirect.advertiseAddr != "" {
-		leaderBase, parseErr := url.Parse(redirect.advertiseAddr)
+	redirect, ok := err.(*notLeaderError)
+	if !ok {
+		return err
+	}
+
+	var leaderBase *url.URL
+	var leaderErr error
+	if redirect.advertiseAddr != "" {
+		var parseErr error
+		leaderBase, parseErr = url.Parse(redirect.advertiseAddr)
 		if parseErr != nil {
 			return err
 		}
 		leaderURL := buildURL(leaderBase, endpoint)
-		leaderErr := c.doJSONRequest(ctx, method, leaderURL, body, out)
+		leaderErr = c.doJSONRequest(ctx, method, leaderURL, body, out)
 		if leaderErr == nil {
 			return nil
 		}
-		timer := time.NewTimer(200 * time.Millisecond)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
+	}
+
+	fallbackErr := err
+	for attempt := 0; attempt < leaderServiceFallbackAttempts; attempt++ {
+		if err := sleepContext(ctx, leaderRetryBackoff); err != nil {
+			return err
 		}
-		fallbackErr := c.doJSONRequest(ctx, method, originalURL, body, out)
+		fallbackErr = c.doJSONRequest(ctx, method, originalURL, body, out)
 		if fallbackErr == nil {
 			return nil
 		}
-		return fmt.Errorf("k1s leader retry failed: advertised %s: %w; service fallback %s: %v", leaderBase.Redacted(), leaderErr, c.baseURL.Redacted(), fallbackErr)
+		if _, stillFollower := fallbackErr.(*notLeaderError); !stillFollower {
+			break
+		}
 	}
-	return err
+
+	if leaderErr != nil {
+		return fmt.Errorf("k1s leader retry failed after %d service fallbacks: advertised %s: %w; service %s: %v", leaderServiceFallbackAttempts, leaderBase.Redacted(), leaderErr, c.baseURL.Redacted(), fallbackErr)
+	}
+	return fmt.Errorf("k1s leader retry failed after %d service fallbacks against %s: %w", leaderServiceFallbackAttempts, c.baseURL.Redacted(), fallbackErr)
 }
 
 func (c *Client) doJSONRequest(ctx context.Context, method, rawURL string, body []byte, out any) error {
@@ -306,6 +325,17 @@ func parseNotLeader(statusCode int, body []byte) *notLeaderError {
 		return nil
 	}
 	return &notLeaderError{advertiseAddr: strv(payload["advertise_addr"])}
+}
+
+func sleepContext(ctx context.Context, duration time.Duration) error {
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func strv(v any) string {

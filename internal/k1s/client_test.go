@@ -157,6 +157,36 @@ func TestApplyFallsBackToServiceURLWhenAdvertisedLeaderUnreachable(t *testing.T)
 	}
 }
 
+func TestApplyKeepsFallbackToServiceURLAcrossFollowers(t *testing.T) {
+	var hits int
+	follower := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "application/json")
+		if hits < 4 {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"error":"not_leader","advertise_addr":"http://127.0.0.1:1"}`))
+			return
+		}
+		if r.URL.Path != "/apply" {
+			t.Fatalf("unexpected fallback path: %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"app":"demo","status":"ready"}`))
+	}))
+	defer follower.Close()
+
+	client, err := NewClient(follower.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.Apply(context.Background(), []byte(`{"apiVersion":"ae.dev/v1alpha1","kind":"Deployment","metadata":{"name":"demo"},"spec":{"image":"busybox"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hits != 4 || result["status"] != "ready" {
+		t.Fatalf("expected repeated service fallbacks, hits=%d result=%#v", hits, result)
+	}
+}
+
 func TestIsNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
