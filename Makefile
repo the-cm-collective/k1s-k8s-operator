@@ -30,16 +30,13 @@ generate:
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
 
 manifests:
-	$(CONTROLLER_GEN) \
-		rbac:roleName=manager-role \
-		crd \
-		paths="./..." \
-		output:crd:artifacts:config=config/crd/bases \
-		output:rbac:artifacts:config=config/rbac
+	$(CONTROLLER_GEN) crd paths="./..." output:crd:artifacts:config=config/crd/bases
+	$(CONTROLLER_GEN) rbac:roleName=manager-role paths="./..." output:rbac:artifacts:config=/tmp/k1s-operator-generated-rbac
 
 kustomize-build:
 	$(KUSTOMIZE) build config/default >/tmp/k1s-operator-default.yaml
 	$(KUSTOMIZE) build config/samples >/tmp/k1s-operator-samples.yaml
+	$(KUSTOMIZE) build config/overlays/microk8s-dev-a >/tmp/k1s-operator-microk8s-dev-a.yaml
 
 dry-run: kustomize-build
 	$(KUBECTL) apply --server-side --dry-run=server -f /tmp/k1s-operator-default.yaml

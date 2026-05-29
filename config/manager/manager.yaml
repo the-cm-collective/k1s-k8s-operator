@@ -28,6 +28,11 @@ spec:
         imagePullPolicy: IfNotPresent
         args:
         - --leader-elect
+        env:
+        - name: WATCH_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
         ports:
         - name: metrics
           containerPort: 8080

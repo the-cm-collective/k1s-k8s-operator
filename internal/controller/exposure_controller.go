@@ -20,6 +20,7 @@ import (
 
 type K1sExposureReconciler struct {
 	client.Client
+	Reader       client.Reader
 	Scheme       *runtime.Scheme
 	TrafficProbe TrafficProbeFunc
 }
@@ -71,7 +72,11 @@ func (r *K1sExposureReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	appReady := appStatus.Ready
 	setCondition(&exposure.Status.Conditions, operatorv1alpha1.ConditionAppFound, conditionStatus(appFound), reasonForBool(appFound), appMessage(appFound, appErr), exposure.Generation)
 	setCondition(&exposure.Status.Conditions, operatorv1alpha1.ConditionAppReady, conditionStatus(appReady), reasonForBool(appReady), appReadyMessage(appReady), exposure.Generation)
-	proxyEndpoints, proxyErr := discoverProxyEndpoints(ctx, r.Client, cluster)
+	reader := r.Reader
+	if reader == nil {
+		reader = r.Client
+	}
+	proxyEndpoints, proxyErr := discoverProxyEndpoints(ctx, reader, cluster)
 	proxyReady := proxyErr == nil && len(proxyEndpoints) > 0
 	trafficEndpoints := proxyEndpoints
 	if !appFound {

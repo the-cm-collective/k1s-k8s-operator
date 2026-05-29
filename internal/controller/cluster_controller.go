@@ -18,6 +18,7 @@ import (
 
 type K1sClusterReconciler struct {
 	client.Client
+	Reader client.Reader
 	Scheme *runtime.Scheme
 }
 
@@ -44,7 +45,11 @@ func (r *K1sClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if cluster.Spec.BootstrapConfigMapRef != nil {
 		cm := &corev1.ConfigMap{}
 		ref := cluster.Spec.BootstrapConfigMapRef
-		if err := r.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: ref.NamespaceOr(cluster.Namespace)}, cm); err != nil {
+		reader := r.Reader
+		if reader == nil {
+			reader = r.Client
+		}
+		if err := reader.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: ref.NamespaceOr(cluster.Namespace)}, cm); err != nil {
 			setCondition(&status.Conditions, operatorv1alpha1.ConditionBootstrapLoaded, metav1.ConditionFalse, operatorv1alpha1.ReasonMissing, err.Error(), cluster.Generation)
 		} else {
 			status.StackDomain = cm.Data["stack_domain"]
@@ -68,7 +73,11 @@ func (r *K1sClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			}
 		}
 	}
-	endpoints, proxyErr := discoverProxyEndpoints(ctx, r.Client, cluster)
+	reader := r.Reader
+	if reader == nil {
+		reader = r.Client
+	}
+	endpoints, proxyErr := discoverProxyEndpoints(ctx, reader, cluster)
 	if proxyErr != nil {
 		setCondition(&status.Conditions, operatorv1alpha1.ConditionProxyReady, metav1.ConditionFalse, operatorv1alpha1.ReasonUnavailable, proxyErr.Error(), cluster.Generation)
 	} else {

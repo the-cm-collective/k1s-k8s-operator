@@ -1,0 +1,4 @@
+resources:
+- ../../default
+- k1s-dev-a-reader-role.yaml
+- k1s-dev-a-reader-rolebinding.yaml

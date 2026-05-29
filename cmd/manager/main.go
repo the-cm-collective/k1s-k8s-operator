@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"os"
+	"strings"
 
 	operatorv1alpha1 "github.com/k1s-project/k1s-operator/api/v1alpha1"
 	"github.com/k1s-project/k1s-operator/internal/controller"
@@ -11,6 +12,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -37,23 +39,30 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	options := ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "k1s-operator.operator.k1s.io",
-	})
+	}
+	if namespaces := watchNamespaces(os.Getenv("WATCH_NAMESPACE")); len(namespaces) > 0 {
+		options.Cache.DefaultNamespaces = map[string]cache.Config{}
+		for _, namespace := range namespaces {
+			options.Cache.DefaultNamespaces[namespace] = cache.Config{}
+		}
+	}
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), options)
 	if err != nil {
 		ctrl.Log.Error(err, "unable to start manager")
 		os.Exit(1)
 	}
 
-	if err := (&controller.K1sClusterReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme()}).SetupWithManager(mgr); err != nil {
+	if err := (&controller.K1sClusterReconciler{Client: mgr.GetClient(), Reader: mgr.GetAPIReader(), Scheme: mgr.GetScheme()}).SetupWithManager(mgr); err != nil {
 		ctrl.Log.Error(err, "unable to create K1sCluster controller")
 		os.Exit(1)
 	}
-	if err := (&controller.K1sExposureReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme()}).SetupWithManager(mgr); err != nil {
+	if err := (&controller.K1sExposureReconciler{Client: mgr.GetClient(), Reader: mgr.GetAPIReader(), Scheme: mgr.GetScheme()}).SetupWithManager(mgr); err != nil {
 		ctrl.Log.Error(err, "unable to create K1sExposure controller")
 		os.Exit(1)
 	}
@@ -84,4 +93,15 @@ func main() {
 		ctrl.Log.Error(err, "manager exited")
 		os.Exit(1)
 	}
+}
+
+func watchNamespaces(raw string) []string {
+	var namespaces []string
+	for _, namespace := range strings.Split(raw, ",") {
+		namespace = strings.TrimSpace(namespace)
+		if namespace != "" {
+			namespaces = append(namespaces, namespace)
+		}
+	}
+	return namespaces
 }

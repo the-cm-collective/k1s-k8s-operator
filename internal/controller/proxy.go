@@ -11,7 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func discoverProxyEndpoints(ctx context.Context, kube client.Client, cluster *operatorv1alpha1.K1sCluster) ([]ProxyEndpoint, error) {
+func discoverProxyEndpoints(ctx context.Context, kube client.Reader, cluster *operatorv1alpha1.K1sCluster) ([]ProxyEndpoint, error) {
 	switch cluster.Spec.Proxy.Mode {
 	case operatorv1alpha1.K1sProxyModeService:
 		if cluster.Spec.Proxy.ServiceRef == nil {

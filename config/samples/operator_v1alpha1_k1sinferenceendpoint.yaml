@@ -2,7 +2,7 @@ apiVersion: operator.k1s.io/v1alpha1
 kind: K1sInferenceEndpoint
 metadata:
   name: llama-smoke
-  namespace: k1s-operator-dev
+  namespace: k1s-operator-system
 spec:
   clusterRef:
     name: dev-a

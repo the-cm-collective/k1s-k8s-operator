@@ -2,7 +2,7 @@ apiVersion: operator.k1s.io/v1alpha1
 kind: K1sCluster
 metadata:
   name: dev-a
-  namespace: k1s-operator-dev
+  namespace: k1s-operator-system
 spec:
   controller:
     url: http://k1s-dev-a-k1s-core-ha-controller.k1s-dev-a.svc:9108
@@ -13,7 +13,7 @@ spec:
     namespace: k1s-dev-a
   authSecretRef:
     name: k1s-dev-a-operator
-    namespace: k1s-operator-dev
+    namespace: k1s-operator-system
     controllerReadTokenKey: controllerReadToken
     controllerWriteTokenKey: controllerWriteToken
     caBundleKey: ca.crt
