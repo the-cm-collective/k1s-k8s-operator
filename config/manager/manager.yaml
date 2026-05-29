@@ -20,6 +20,8 @@ spec:
       serviceAccountName: k1s-operator-controller-manager
       securityContext:
         runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: manager
         image: controller:latest
@@ -50,6 +52,10 @@ spec:
             memory: 256Mi
         securityContext:
           allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsGroup: 65532
+          runAsNonRoot: true
+          runAsUser: 65532
           capabilities:
             drop:
             - ALL
