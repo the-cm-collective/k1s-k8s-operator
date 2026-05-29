@@ -20,7 +20,8 @@ import (
 
 type K1sExposureReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme       *runtime.Scheme
+	TrafficProbe TrafficProbeFunc
 }
 
 // +kubebuilder:rbac:groups=operator.k1s.io,resources=k1sexposures,verbs=get;list;watch;update;patch
@@ -97,6 +98,7 @@ func (r *K1sExposureReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	exposure.Status.AppReady = appReady
 	exposure.Status.ServiceName = exposureServiceName(exposure)
 	exposure.Status.EndpointSliceName = exposureEndpointSliceName(exposure)
+	exposure.Status.IngressName = ""
 	if exposure.Spec.Ingress.EnabledOrDefault() {
 		exposure.Status.IngressName = exposureIngressName(exposure)
 	}
@@ -104,7 +106,23 @@ func (r *K1sExposureReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	exposure.Status.LastAppSyncTime = &now
 	setCondition(&exposure.Status.Conditions, operatorv1alpha1.ConditionResourcesApplied, metav1.ConditionTrue, operatorv1alpha1.ReasonApplied, "generated resources reconciled", exposure.Generation)
 	setCondition(&exposure.Status.Conditions, operatorv1alpha1.ConditionClusterReady, metav1.ConditionTrue, operatorv1alpha1.ReasonReady, "referenced cluster loaded", exposure.Generation)
-	ready := appFound && appReady && proxyReady
+	trafficReady := !exposure.Spec.TrafficProbe.EnabledOrDefault()
+	if exposure.Spec.TrafficProbe.EnabledOrDefault() {
+		probe := r.TrafficProbe
+		if probe == nil {
+			probe = defaultTrafficProbe
+		}
+		if err := probe(ctx, exposure); err != nil {
+			setCondition(&exposure.Status.Conditions, operatorv1alpha1.ConditionTrafficReady, metav1.ConditionFalse, operatorv1alpha1.ReasonUnavailable, err.Error(), exposure.Generation)
+			trafficReady = false
+		} else {
+			setCondition(&exposure.Status.Conditions, operatorv1alpha1.ConditionTrafficReady, metav1.ConditionTrue, operatorv1alpha1.ReasonReady, "traffic probe succeeded", exposure.Generation)
+			trafficReady = true
+		}
+	} else {
+		setCondition(&exposure.Status.Conditions, operatorv1alpha1.ConditionTrafficReady, metav1.ConditionUnknown, operatorv1alpha1.ReasonPending, "traffic probe disabled", exposure.Generation)
+	}
+	ready := appFound && appReady && proxyReady && trafficReady
 	setCondition(&exposure.Status.Conditions, operatorv1alpha1.ConditionReady, conditionStatus(ready), reasonForBool(ready), readyMessage(ready), exposure.Generation)
 	return ctrl.Result{RequeueAfter: pollInterval(cluster.Spec.PollIntervalSeconds)}, patchExposureStatus()
 }
@@ -143,8 +161,15 @@ func (r *K1sExposureReconciler) reconcileEndpointSlice(ctx context.Context, clus
 
 func (r *K1sExposureReconciler) reconcileIngress(ctx context.Context, cluster *operatorv1alpha1.K1sCluster, exposure *operatorv1alpha1.K1sExposure) error {
 	wanted, err := BuildExposureIngress(cluster, exposure)
-	if err != nil || wanted == nil {
+	if err != nil {
 		return err
+	}
+	if wanted == nil {
+		current := &networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: exposureIngressName(exposure), Namespace: exposure.Namespace}}
+		if err := r.Delete(ctx, current); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+		return nil
 	}
 	current := &networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: wanted.Name, Namespace: wanted.Namespace}}
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, current, func() error {
