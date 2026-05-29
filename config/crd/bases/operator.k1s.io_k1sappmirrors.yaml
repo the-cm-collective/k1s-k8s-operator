@@ -150,8 +150,6 @@ spec:
                       type: boolean
                     site:
                       type: string
-                  required:
-                  - ready
                   type: object
                 type: array
               ready:
@@ -167,15 +165,9 @@ spec:
                   ready:
                     format: int32
                     type: integer
-                required:
-                - desired
-                - live
-                - ready
                 type: object
               revision:
                 type: string
-            required:
-            - ready
             type: object
         type: object
     served: true

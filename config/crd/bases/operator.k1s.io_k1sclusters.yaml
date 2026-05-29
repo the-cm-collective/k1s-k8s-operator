@@ -221,10 +221,6 @@ spec:
                   total:
                     format: int32
                     type: integer
-                required:
-                - ready
-                - stale
-                - total
                 type: object
               observedGeneration:
                 format: int64
@@ -235,10 +231,6 @@ spec:
                 type: string
               wildcardAppsDomain:
                 type: string
-            required:
-            - apishimAvailable
-            - controllerAvailable
-            - proxyReady
             type: object
         type: object
     served: true

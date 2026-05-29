@@ -71,11 +71,11 @@ type K1sExposureSpec struct {
 
 type K1sExposureStatus struct {
 	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
-	AppReady           bool               `json:"appReady"`
+	AppReady           bool               `json:"appReady,omitempty"`
 	ServiceName        string             `json:"serviceName,omitempty"`
 	EndpointSliceName  string             `json:"endpointSliceName,omitempty"`
 	IngressName        string             `json:"ingressName,omitempty"`
-	ProxyEndpointCount int32              `json:"proxyEndpointCount"`
+	ProxyEndpointCount int32              `json:"proxyEndpointCount,omitempty"`
 	LastAppSyncTime    *metav1.Time       `json:"lastAppSyncTime,omitempty"`
 	Conditions         []metav1.Condition `json:"conditions,omitempty"`
 }

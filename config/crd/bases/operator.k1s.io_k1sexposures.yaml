@@ -201,9 +201,6 @@ spec:
                 type: integer
               serviceName:
                 type: string
-            required:
-            - appReady
-            - proxyEndpointCount
             type: object
         type: object
     served: true

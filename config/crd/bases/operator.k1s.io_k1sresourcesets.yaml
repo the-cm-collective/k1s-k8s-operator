@@ -155,9 +155,6 @@ spec:
                 type: integer
               ready:
                 type: boolean
-            required:
-            - applied
-            - ready
             type: object
         type: object
     served: true

@@ -22,7 +22,7 @@ type K1sAppSpec struct {
 type K1sAppStatus struct {
 	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
 	AppName            string             `json:"appName,omitempty"`
-	Ready              bool               `json:"ready"`
+	Ready              bool               `json:"ready,omitempty"`
 	Phase              string             `json:"phase,omitempty"`
 	Endpoint           string             `json:"endpoint,omitempty"`
 	Replicas           K1sReplicaSummary  `json:"replicas,omitempty"`
@@ -110,7 +110,7 @@ type K1sInferenceEndpointSpec struct {
 
 type K1sInferenceEndpointStatus struct {
 	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
-	Ready              bool               `json:"ready"`
+	Ready              bool               `json:"ready,omitempty"`
 	Phase              string             `json:"phase,omitempty"`
 	CellName           string             `json:"cellName,omitempty"`
 	CellSetName        string             `json:"cellSetName,omitempty"`
@@ -156,8 +156,8 @@ type K1sManagedResourceStatus struct {
 
 type K1sResourceSetStatus struct {
 	ObservedGeneration int64                      `json:"observedGeneration,omitempty"`
-	Applied            int32                      `json:"applied"`
-	Ready              bool                       `json:"ready"`
+	Applied            int32                      `json:"applied,omitempty"`
+	Ready              bool                       `json:"ready,omitempty"`
 	ManagedResources   []K1sManagedResourceStatus `json:"managedResources,omitempty"`
 	LastSyncTime       *metav1.Time               `json:"lastSyncTime,omitempty"`
 	Conditions         []metav1.Condition         `json:"conditions,omitempty"`

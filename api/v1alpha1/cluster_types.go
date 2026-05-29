@@ -47,16 +47,16 @@ type K1sClusterSpec struct {
 }
 
 type K1sNodeSummary struct {
-	Ready int32 `json:"ready"`
-	Stale int32 `json:"stale"`
-	Total int32 `json:"total"`
+	Ready int32 `json:"ready,omitempty"`
+	Stale int32 `json:"stale,omitempty"`
+	Total int32 `json:"total,omitempty"`
 }
 
 type K1sClusterStatus struct {
 	ObservedGeneration  int64              `json:"observedGeneration,omitempty"`
-	ControllerAvailable bool               `json:"controllerAvailable"`
-	ApishimAvailable    bool               `json:"apishimAvailable"`
-	ProxyReady          bool               `json:"proxyReady"`
+	ControllerAvailable bool               `json:"controllerAvailable,omitempty"`
+	ApishimAvailable    bool               `json:"apishimAvailable,omitempty"`
+	ProxyReady          bool               `json:"proxyReady,omitempty"`
 	StackDomain         string             `json:"stackDomain,omitempty"`
 	WildcardAppsDomain  string             `json:"wildcardAppsDomain,omitempty"`
 	NodeSummary         K1sNodeSummary     `json:"nodeSummary,omitempty"`

@@ -9,20 +9,20 @@ type K1sAppMirrorSpec struct {
 }
 
 type K1sReplicaSummary struct {
-	Desired int32 `json:"desired"`
-	Ready   int32 `json:"ready"`
-	Live    int32 `json:"live"`
+	Desired int32 `json:"desired,omitempty"`
+	Ready   int32 `json:"ready,omitempty"`
+	Live    int32 `json:"live,omitempty"`
 }
 
 type K1sPlacementStatus struct {
 	Node  string `json:"node,omitempty"`
 	Site  string `json:"site,omitempty"`
-	Ready bool   `json:"ready"`
+	Ready bool   `json:"ready,omitempty"`
 }
 
 type K1sAppMirrorStatus struct {
 	ObservedGeneration int64                `json:"observedGeneration,omitempty"`
-	Ready              bool                 `json:"ready"`
+	Ready              bool                 `json:"ready,omitempty"`
 	Replicas           K1sReplicaSummary    `json:"replicas,omitempty"`
 	Image              string               `json:"image,omitempty"`
 	Revision           string               `json:"revision,omitempty"`
