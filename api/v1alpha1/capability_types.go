@@ -147,12 +147,20 @@ type K1sResourceSetSpec struct {
 	DeletePolicy K1sDeletePolicy `json:"deletePolicy,omitempty"`
 }
 
+type K1sManagedResourceStatus struct {
+	Kind      string `json:"kind"`
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	Hash      string `json:"hash"`
+}
+
 type K1sResourceSetStatus struct {
-	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
-	Applied            int32              `json:"applied"`
-	Ready              bool               `json:"ready"`
-	LastSyncTime       *metav1.Time       `json:"lastSyncTime,omitempty"`
-	Conditions         []metav1.Condition `json:"conditions,omitempty"`
+	ObservedGeneration int64                      `json:"observedGeneration,omitempty"`
+	Applied            int32                      `json:"applied"`
+	Ready              bool                       `json:"ready"`
+	ManagedResources   []K1sManagedResourceStatus `json:"managedResources,omitempty"`
+	LastSyncTime       *metav1.Time               `json:"lastSyncTime,omitempty"`
+	Conditions         []metav1.Condition         `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true

@@ -370,6 +370,205 @@ func TestK1sAppKeepsFinalizerWhenRemoteDeleteFails(t *testing.T) {
 	}
 }
 
+func TestResourceSetPrunesRemovedManifest(t *testing.T) {
+	ctx := context.Background()
+	var applyCount int
+	var deleteSeen bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/apply":
+			applyCount++
+			_, _ = w.Write([]byte(`{"status":"ready"}`))
+		case "/delete/old":
+			deleteSeen = r.URL.Query().Get("purge") == "1"
+			_, _ = w.Write([]byte(`{"removed":true}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	scheme := runtime.NewScheme()
+	if err := operatorv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	cluster := &operatorv1alpha1.K1sCluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "dev-a", Namespace: "apps"},
+		Spec: operatorv1alpha1.K1sClusterSpec{
+			Controller: operatorv1alpha1.K1sEndpointSpec{URL: server.URL},
+			AuthSecretRef: &operatorv1alpha1.K1sAuthSecretRef{
+				Name:                    "k1s-creds",
+				ControllerWriteTokenKey: "write",
+			},
+		},
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "k1s-creds", Namespace: "apps"},
+		Data:       map[string][]byte{"write": []byte("token")},
+	}
+	set := &operatorv1alpha1.K1sResourceSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "bundle", Namespace: "apps", Finalizers: []string{capabilityFinalizer}},
+		Spec: operatorv1alpha1.K1sResourceSetSpec{
+			ClusterRef: operatorv1alpha1.NamespacedNameRef{Name: "dev-a"},
+			Prune:      true,
+			Manifests: []runtime.RawExtension{{
+				Raw: []byte(`{"apiVersion":"ae.dev/v1alpha1","kind":"Deployment","metadata":{"name":"new"},"spec":{"image":"busybox"}}`),
+			}},
+		},
+		Status: operatorv1alpha1.K1sResourceSetStatus{
+			ManagedResources: []operatorv1alpha1.K1sManagedResourceStatus{{Kind: "Deployment", Namespace: "default", Name: "old", Hash: "oldhash"}},
+		},
+	}
+	kube := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cluster, secret, set).
+		WithStatusSubresource(&operatorv1alpha1.K1sResourceSet{}).
+		Build()
+	reconciler := &K1sResourceSetReconciler{Client: kube, Scheme: scheme}
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "apps", Name: "bundle"}}
+
+	if _, err := reconciler.Reconcile(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	got := &operatorv1alpha1.K1sResourceSet{}
+	if err := kube.Get(ctx, req.NamespacedName, got); err != nil {
+		t.Fatal(err)
+	}
+	if !deleteSeen || applyCount != 1 {
+		t.Fatalf("expected prune delete and one apply, delete=%v apply=%d", deleteSeen, applyCount)
+	}
+	if len(got.Status.ManagedResources) != 1 || got.Status.ManagedResources[0].Name != "new" {
+		t.Fatalf("unexpected managed inventory: %#v", got.Status.ManagedResources)
+	}
+}
+
+func TestResourceSetRejectsMalformedManifest(t *testing.T) {
+	ctx := context.Background()
+	var applyCount int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		applyCount++
+		t.Fatalf("malformed manifest should not be applied")
+	}))
+	defer server.Close()
+
+	scheme := runtime.NewScheme()
+	if err := operatorv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	cluster := &operatorv1alpha1.K1sCluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "dev-a", Namespace: "apps"},
+		Spec: operatorv1alpha1.K1sClusterSpec{
+			Controller: operatorv1alpha1.K1sEndpointSpec{URL: server.URL},
+			AuthSecretRef: &operatorv1alpha1.K1sAuthSecretRef{
+				Name:                    "k1s-creds",
+				ControllerWriteTokenKey: "write",
+			},
+		},
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "k1s-creds", Namespace: "apps"},
+		Data:       map[string][]byte{"write": []byte("token")},
+	}
+	set := &operatorv1alpha1.K1sResourceSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "bundle", Namespace: "apps", Finalizers: []string{capabilityFinalizer}},
+		Spec: operatorv1alpha1.K1sResourceSetSpec{
+			ClusterRef: operatorv1alpha1.NamespacedNameRef{Name: "dev-a"},
+			Manifests:  []runtime.RawExtension{{Raw: []byte(`{}`)}},
+		},
+	}
+	kube := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cluster, secret, set).
+		WithStatusSubresource(&operatorv1alpha1.K1sResourceSet{}).
+		Build()
+	reconciler := &K1sResourceSetReconciler{Client: kube, Scheme: scheme}
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "apps", Name: "bundle"}}
+
+	if _, err := reconciler.Reconcile(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	got := &operatorv1alpha1.K1sResourceSet{}
+	if err := kube.Get(ctx, req.NamespacedName, got); err != nil {
+		t.Fatal(err)
+	}
+	if applyCount != 0 || got.Status.Ready || got.Status.Applied != 0 {
+		t.Fatalf("unexpected malformed manifest status: apply=%d status=%#v", applyCount, got.Status)
+	}
+	allowed := findCondition(got.Status.Conditions, operatorv1alpha1.ConditionPolicyAllowed)
+	if allowed == nil || allowed.Status != metav1.ConditionFalse {
+		t.Fatalf("expected policy condition false, got %#v", allowed)
+	}
+}
+
+func TestResourceSetKeepsFinalizerWhenRemoteDeleteFails(t *testing.T) {
+	ctx := context.Background()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/delete/echo" {
+			t.Fatalf("unexpected path: %s", r.URL.String())
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"delete failed"}`))
+	}))
+	defer server.Close()
+
+	scheme := runtime.NewScheme()
+	if err := operatorv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	deletedAt := metav1.Now()
+	cluster := &operatorv1alpha1.K1sCluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "dev-a", Namespace: "apps"},
+		Spec: operatorv1alpha1.K1sClusterSpec{
+			Controller: operatorv1alpha1.K1sEndpointSpec{URL: server.URL},
+			AuthSecretRef: &operatorv1alpha1.K1sAuthSecretRef{
+				Name:                    "k1s-creds",
+				ControllerWriteTokenKey: "write",
+			},
+		},
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "k1s-creds", Namespace: "apps"},
+		Data:       map[string][]byte{"write": []byte("token")},
+	}
+	set := &operatorv1alpha1.K1sResourceSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "bundle", Namespace: "apps", Finalizers: []string{capabilityFinalizer}, DeletionTimestamp: &deletedAt},
+		Spec: operatorv1alpha1.K1sResourceSetSpec{
+			ClusterRef: operatorv1alpha1.NamespacedNameRef{Name: "dev-a"},
+		},
+		Status: operatorv1alpha1.K1sResourceSetStatus{
+			ManagedResources: []operatorv1alpha1.K1sManagedResourceStatus{{Kind: "Deployment", Namespace: "default", Name: "echo", Hash: "hash"}},
+		},
+	}
+	kube := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cluster, secret, set).
+		WithStatusSubresource(&operatorv1alpha1.K1sResourceSet{}).
+		Build()
+	reconciler := &K1sResourceSetReconciler{Client: kube, Scheme: scheme}
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "apps", Name: "bundle"}}
+
+	if _, err := reconciler.Reconcile(ctx, req); err == nil {
+		t.Fatal("expected delete failure")
+	}
+	got := &operatorv1alpha1.K1sResourceSet{}
+	if err := kube.Get(ctx, req.NamespacedName, got); err != nil {
+		t.Fatal(err)
+	}
+	if !containsString(got.Finalizers, capabilityFinalizer) {
+		t.Fatalf("expected finalizer to remain after failed remote delete: %#v", got.Finalizers)
+	}
+}
+
 func findCondition(conditions []metav1.Condition, conditionType string) *metav1.Condition {
 	for i := range conditions {
 		if conditions[i].Type == conditionType {

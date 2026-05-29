@@ -325,6 +325,28 @@ func (r *K1sResourceSetReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			obj.(*operatorv1alpha1.K1sResourceSet).Status = set.Status
 		})
 	}
+	if !set.ObjectMeta.DeletionTimestamp.IsZero() {
+		if containsString(set.Finalizers, capabilityFinalizer) {
+			if set.Spec.DeletePolicy != operatorv1alpha1.K1sDeletePolicyOrphan {
+				if err := deleteManagedResources(ctx, api, set.Status.ManagedResources); err != nil {
+					set.Status.ObservedGeneration = set.Generation
+					setCondition(&set.Status.Conditions, operatorv1alpha1.ConditionApplied, metav1.ConditionFalse, operatorv1alpha1.ReasonUnavailable, "failed to delete managed k1s resources: "+err.Error(), set.Generation)
+					_ = patchStatus(ctx, r.Client, set, func(obj client.Object) {
+						obj.(*operatorv1alpha1.K1sResourceSet).Status = set.Status
+					})
+					return ctrl.Result{}, err
+				}
+			}
+			return ctrl.Result{}, patchFinalizers(ctx, r.Client, set, removeString(set.Finalizers, capabilityFinalizer))
+		}
+		return ctrl.Result{}, nil
+	}
+	if !containsString(set.Finalizers, capabilityFinalizer) {
+		if err := patchFinalizers(ctx, r.Client, set, append(set.Finalizers, capabilityFinalizer)); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{Requeue: true}, nil
+	}
 	allowed := set.Spec.AllowedKinds
 	if len(allowed) == 0 {
 		allowed = []string{"Deployment", "InferenceCell", "InferenceCellSet"}
@@ -332,35 +354,53 @@ func (r *K1sResourceSetReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	var applied int32
 	var firstErr error
 	rawManifests := make([][]byte, 0, len(set.Spec.Manifests))
+	desired := make([]operatorv1alpha1.K1sManagedResourceStatus, 0, len(set.Spec.Manifests))
 	for _, manifest := range set.Spec.Manifests {
 		rawManifests = append(rawManifests, manifest.Raw)
-	}
-	manifestHash := hashManifestSet(rawManifests)
-	shouldApply := lastAppliedHash(set) != manifestHash
-	for _, manifest := range set.Spec.Manifests {
-		kind := kindFromManifest(manifest.Raw)
-		if !slices.Contains(allowed, kind) {
-			firstErr = fmt.Errorf("kind %q is not allowed by this K1sResourceSet", kind)
+		ref, err := managedResourceFromManifest(manifest.Raw)
+		if err != nil {
+			firstErr = err
 			break
 		}
-		if shouldApply {
-			if _, err := api.Apply(ctx, manifest.Raw); err != nil {
-				firstErr = err
-				break
-			}
+		if !slices.Contains(allowed, ref.Kind) {
+			firstErr = fmt.Errorf("kind %q is not allowed by this K1sResourceSet", ref.Kind)
+			break
 		}
-		applied++
+		desired = append(desired, ref)
+	}
+	manifestHash := hashManifestSet(rawManifests)
+	shouldApply := firstErr == nil && lastAppliedHash(set) != manifestHash
+	if firstErr == nil && set.Spec.Prune {
+		if err := pruneManagedResources(ctx, api, set.Status.ManagedResources, desired); err != nil {
+			firstErr = err
+		}
+	}
+	if firstErr == nil {
+		for _, manifest := range set.Spec.Manifests {
+			if shouldApply {
+				if _, err := api.Apply(ctx, manifest.Raw); err != nil {
+					firstErr = err
+					break
+				}
+			}
+			applied++
+		}
 	}
 	if firstErr == nil && shouldApply {
 		if err := patchLastAppliedHash(ctx, r.Client, set, manifestHash); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
+	nextManaged := set.Status.ManagedResources
+	if firstErr == nil {
+		nextManaged = desired
+	}
 	now := metav1.Now()
 	set.Status.ObservedGeneration = set.Generation
 	set.Status.LastSyncTime = &now
 	set.Status.Applied = applied
 	set.Status.Ready = firstErr == nil && applied == int32(len(set.Spec.Manifests))
+	set.Status.ManagedResources = nextManaged
 	if firstErr != nil {
 		setCondition(&set.Status.Conditions, operatorv1alpha1.ConditionPolicyAllowed, metav1.ConditionFalse, operatorv1alpha1.ReasonDenied, firstErr.Error(), set.Generation)
 		setCondition(&set.Status.Conditions, operatorv1alpha1.ConditionApplied, metav1.ConditionFalse, operatorv1alpha1.ReasonUnavailable, firstErr.Error(), set.Generation)
@@ -512,6 +552,89 @@ func applyObservedInferenceStatus(status *operatorv1alpha1.K1sInferenceEndpointS
 		return
 	}
 	status.CellName = firstNonEmpty(observed.Name, status.CellName)
+}
+
+func managedResourceFromManifest(raw []byte) (operatorv1alpha1.K1sManagedResourceStatus, error) {
+	var payload struct {
+		Kind     string `json:"kind"`
+		Metadata struct {
+			Name      string `json:"name"`
+			Namespace string `json:"namespace"`
+		} `json:"metadata"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return operatorv1alpha1.K1sManagedResourceStatus{}, err
+	}
+	if payload.Kind == "" {
+		return operatorv1alpha1.K1sManagedResourceStatus{}, fmt.Errorf("manifest kind is required")
+	}
+	if payload.Metadata.Name == "" {
+		return operatorv1alpha1.K1sManagedResourceStatus{}, fmt.Errorf("manifest metadata.name is required")
+	}
+	namespace := payload.Metadata.Namespace
+	if namespace == "" {
+		namespace = "default"
+	}
+	return operatorv1alpha1.K1sManagedResourceStatus{
+		Kind:      payload.Kind,
+		Namespace: namespace,
+		Name:      payload.Metadata.Name,
+		Hash:      hashBytes(raw),
+	}, nil
+}
+
+func pruneManagedResources(ctx context.Context, api *k1sclient.Client, previous, desired []operatorv1alpha1.K1sManagedResourceStatus) error {
+	desiredKeys := map[string]struct{}{}
+	for _, resource := range desired {
+		desiredKeys[managedResourceKey(resource)] = struct{}{}
+	}
+	for _, resource := range previous {
+		if _, ok := desiredKeys[managedResourceKey(resource)]; ok {
+			continue
+		}
+		if err := deleteManagedResource(ctx, api, resource); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func deleteManagedResources(ctx context.Context, api *k1sclient.Client, resources []operatorv1alpha1.K1sManagedResourceStatus) error {
+	for _, resource := range resources {
+		if err := deleteManagedResource(ctx, api, resource); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func deleteManagedResource(ctx context.Context, api *k1sclient.Client, resource operatorv1alpha1.K1sManagedResourceStatus) error {
+	var err error
+	switch resource.Kind {
+	case "Deployment":
+		_, err = api.DeleteApp(ctx, resourceDeleteName(resource.Namespace, resource.Name), true)
+	case "InferenceCell":
+		_, err = api.DeleteInferenceCell(ctx, resource.Namespace, resource.Name)
+	case "InferenceCellSet":
+		_, err = api.DeleteInferenceCellSet(ctx, resource.Namespace, resource.Name)
+	default:
+		return fmt.Errorf("kind %q cannot be deleted by K1sResourceSet", resource.Kind)
+	}
+	if k1sclient.IsNotFound(err) {
+		return nil
+	}
+	return err
+}
+
+func managedResourceKey(resource operatorv1alpha1.K1sManagedResourceStatus) string {
+	return resource.Kind + "/" + resource.Namespace + "/" + resource.Name
+}
+
+func resourceDeleteName(namespace, name string) string {
+	if namespace != "" && namespace != "default" {
+		return namespace + "--" + name
+	}
+	return name
 }
 
 func observedEndpoint(observed k1sclient.AppStatus) string {

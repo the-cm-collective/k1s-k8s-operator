@@ -132,6 +132,24 @@ spec:
               lastSyncTime:
                 format: date-time
                 type: string
+              managedResources:
+                items:
+                  properties:
+                    hash:
+                      type: string
+                    kind:
+                      type: string
+                    name:
+                      type: string
+                    namespace:
+                      type: string
+                  required:
+                  - hash
+                  - kind
+                  - name
+                  - namespace
+                  type: object
+                type: array
               observedGeneration:
                 format: int64
                 type: integer
