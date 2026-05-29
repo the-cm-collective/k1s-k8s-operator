@@ -1,6 +1,10 @@
-# k1s Operator
+# Keleustes Operator
 
-`k1s-operator` lets Kubernetes users consume selected k1s capabilities through Kubernetes-native APIs. It does not make k1s nodes schedulable Kubernetes nodes. Kubernetes workloads create and observe custom resources; the operator holds scoped k1s credentials and performs the k1s-side CRUD and discovery.
+<p align="center">
+  <img src="k1s-keleustes.png" alt="Keleustes Operator compass rose" width="480">
+</p>
+
+**Keleustes** is the official name of `k1s-operator`, the Kubernetes operator that lets Kubernetes users consume selected k1s capabilities through Kubernetes-native APIs. It does not make k1s nodes schedulable Kubernetes nodes. Kubernetes workloads create and observe custom resources; the operator holds scoped k1s credentials and performs the k1s-side CRUD and discovery.
 
 The project is pre-1.0 early development. Public defaults are intentionally conservative: namespace-scoped RBAC, localhost-bound metrics, non-root distroless runtime, a default ingress-deny NetworkPolicy for the controller pod, split read/write k1s tokens, and an operator-level cap on the k1s resource kinds that `K1sResourceSet` may manage.
 
@@ -11,6 +15,42 @@ The operator supports both standard service workflows and AI/ML workflows:
 - Kubernetes-side exposure through selectorless `Service`, managed `EndpointSlice`, optional `Ingress`, and optional traffic probes;
 - k1s cluster discovery through status conditions on `K1sCluster`;
 - namespace-scoped default RBAC for public-safe installs.
+
+## Why "Keleustes"?
+
+**Keleustes** (Ancient Greek: **Κελευστής**, *keleustḗs*)
+
+Pronunciation:
+
+> keh-leu-STAYS
+
+Meaning:
+
+> "The caller of commands"
+>
+> "The one who coordinates the crew"
+
+In the great ships of the ancient Mediterranean, the **Keleustes** was the officer responsible for relaying commands and maintaining coordination among the rowers. While the helmsman determined the course, the Keleustes ensured the crew moved together as one.
+
+The term derives from the Greek verb **κελεύω** (*keleúō*): "to command," "to direct," and "to urge forward."
+
+Kubernetes itself derives from the Greek word **κυβερνήτης** (*kybernḗtēs*): "helmsman" or "steersman."
+
+If Kubernetes is the helmsman, Keleustes is the officer who turns intent into coordinated action.
+
+The Keleustes Operator exists to bridge Kubernetes and k1s, translating desired state, coordinating execution, and helping both systems work together.
+
+## Our Symbol
+
+The compass rose is a traditional mariner's symbol of guidance and safe return. In nautical tradition, the compass rose and north star symbolize finding your way home, staying true to your course, guidance through uncertainty, and loyalty to crew and mission.
+
+For us, it reflects a simple idea:
+
+> Build systems that help people find their way home.
+
+Reliable. Legible. Cooperative.
+
+A trusted first mate for Kubernetes and k1s.
 
 ## Architecture
 
