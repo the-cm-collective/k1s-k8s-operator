@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	leaderServiceFallbackAttempts = 5
+	leaderServiceFallbackAttempts = 12
 	leaderRetryBackoff            = 200 * time.Millisecond
 )
 
@@ -242,6 +242,7 @@ func (c *Client) doJSONRequest(ctx context.Context, method, rawURL string, body 
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	req.Close = true
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}

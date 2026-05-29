@@ -187,6 +187,25 @@ func TestApplyKeepsFallbackToServiceURLAcrossFollowers(t *testing.T) {
 	}
 }
 
+func TestRequestsUseOneShotConnections(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !r.Close {
+			t.Fatalf("expected k1s client request to close the connection")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Health(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestIsNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
