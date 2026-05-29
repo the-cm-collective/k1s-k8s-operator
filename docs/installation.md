@@ -86,8 +86,6 @@ spec:
   pollIntervalSeconds: 15
 ```
 
-Use HTTP controller URLs only in controlled local labs. The MicroK8s dev-a guide documents that development-only path.
-
 Wait for readiness:
 
 ```sh

@@ -98,7 +98,7 @@ rules:
 
 The default install does not have broad cluster read access. If `K1sCluster.spec.proxy.serviceRef.namespace` points to another namespace, add an explicit reader role in that namespace for the specific Services and discovery resources needed by the operator.
 
-The MicroK8s `k1s-dev-a` overlay demonstrates this pattern in `config/overlays/microk8s-dev-a`.
+For cross-namespace proxy Services, create an explicit Role and RoleBinding in the target namespace that grants the operator ServiceAccount read access only to the needed Services and discovery resources.
 
 ## Status and Logging Rules
 

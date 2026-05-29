@@ -99,25 +99,16 @@ Install into the default namespace-scoped deployment:
 kubectl apply --server-side -f /tmp/k1s-operator-default.yaml
 ```
 
-For the local MicroK8s `k1s-dev-a` lab overlay:
-
-```sh
-kustomize build config/overlays/microk8s-dev-a >/tmp/k1s-operator-microk8s-dev-a.yaml
-kubectl apply --server-side -f /tmp/k1s-operator-microk8s-dev-a.yaml
-```
-
 The operator expects a namespace-local Secret with separate read and write token keys when mutation CRDs are used. See [docs/installation.md](docs/installation.md) and [docs/security-rbac.md](docs/security-rbac.md).
 
-Production installs should use HTTPS k1s controller URLs with a `ca.crt` bundle or public trust chain, versioned or digest-pinned operator images, Kubernetes RBAC for tenant access to CRDs, and scoped k1s tokens held only in the operator namespace. Local HTTP examples are documented only for controlled development labs.
+Production installs should use HTTPS k1s controller URLs with a `ca.crt` bundle or public trust chain, versioned or digest-pinned operator images, Kubernetes RBAC for tenant access to CRDs, and scoped k1s tokens held only in the operator namespace.
 
 ## Documentation
 
 - [Installation guide](docs/installation.md)
 - [Public early-dev readiness](docs/public-readiness.md)
-- [MicroK8s dev-a operations guide](docs/microk8s-dev-a-ops.md)
 - [Security and RBAC guide](docs/security-rbac.md)
 - [Troubleshooting guide](docs/troubleshooting.md)
-- [Stage 2 MicroK8s E2E notes](docs/stage2-microk8s-e2e.md)
 - [Implementation plan](PLAN.md)
 
 ## Validation Status
@@ -125,7 +116,8 @@ Production installs should use HTTPS k1s controller URLs with a `ca.crt` bundle 
 The current checkpoint has passed:
 
 - `make verify`;
-- server-side dry-runs for `config/default` and `config/overlays/microk8s-dev-a`;
-- live MicroK8s readiness for `K1sCluster`, `K1sApp`, `K1sExposure`, `K1sInferenceEndpoint`, standard `K1sResourceSet`, and mixed standard plus AI/ML `K1sResourceSet`.
+- `govulncheck ./...`;
+- kustomize builds for the default install and samples;
+- server-side dry-runs for `config/default`.
 
 The live AI/ML test requires a k1s controller build that supports `InferenceCell` and `InferenceCellSet` through `/apply` plus the native `/inference/*` routes.

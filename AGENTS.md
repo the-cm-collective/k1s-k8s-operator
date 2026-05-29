@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This repository is the Kubernetes operator for exposing selected k1s workloads to a Kubernetes cluster. `PLAN.md` is the source of truth for requirements, CRDs, reconciliation behavior, and local `microk8s`/`k1s-dev-a` lab assumptions.
+This repository is the Kubernetes operator for exposing selected k1s workloads to a Kubernetes cluster. `PLAN.md` is the source of truth for requirements, CRDs, reconciliation behavior, and public early-development assumptions.
 
 Use this layout:
 
@@ -24,7 +24,7 @@ Use these commands for the public-readiness workflow:
 - `make generate`: regenerate deepcopy code.
 - `kustomize build config/default`: render install manifests.
 - `make dry-run`: validate rendered default manifests against the current cluster.
-- `kubectl -n k1s-operator-dev get k1sclusters,k1sexposures,k1sappmirrors`: inspect operator resources in the lab namespace.
+- `kubectl -n k1s-operator-system get k1sclusters,k1sexposures,k1sappmirrors`: inspect operator resources in the default install namespace.
 
 ## Coding Style & Naming Conventions
 
@@ -34,7 +34,7 @@ Use Kubernetes-style API names: short, stable, explicit. Resource kinds use Pasc
 
 ## Testing Guidelines
 
-Prefer focused tests for resource builders and status-condition transitions. Add reconciliation tests for ownership, cleanup, and failure paths. Integration tests should target an isolated operator namespace. MicroK8s/k1s-dev-a validation may read k1s-dev-a bootstrap/proxy resources and may mutate k1s resources through the operator using dedicated scoped write credentials.
+Prefer focused tests for resource builders and status-condition transitions. Add reconciliation tests for ownership, cleanup, and failure paths. Integration tests should target an isolated operator namespace and use dedicated scoped k1s credentials.
 
 Name Go tests `Test<Behavior>` and fixtures after the scenario they represent, for example `exposure_proxy_service_ready.yaml`.
 
@@ -42,7 +42,7 @@ Name Go tests `Test<Behavior>` and fixtures after the scenario they represent, f
 
 Use concise, imperative subjects with a scope when helpful: `docs: add operator plan`, `api: add K1sExposure types`.
 
-Pull requests should include the problem statement, implementation summary, validation commands, and lab assumptions. Link issues when available. For operator behavior changes, include sample YAML or status output.
+Pull requests should include the problem statement, implementation summary, validation commands, and relevant deployment assumptions. Link issues when available. For operator behavior changes, include sample YAML or status output.
 
 ## Security & Configuration Tips
 

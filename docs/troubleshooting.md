@@ -11,8 +11,8 @@ kubectl -n k1s-operator-system get k1scluster,k1sapp,k1sexposure,k1sinferenceend
 Conditions are the first diagnostic surface. Inspect them before reading controller logs:
 
 ```sh
-kubectl -n k1s-operator-system describe k1scluster/dev-a-live
-kubectl -n k1s-operator-system describe k1sresourceset/live-bundle
+kubectl -n k1s-operator-system describe k1scluster/edge-a
+kubectl -n k1s-operator-system describe k1sresourceset/example-bundle
 ```
 
 ## Dry-Run Conflicts
@@ -20,7 +20,7 @@ kubectl -n k1s-operator-system describe k1sresourceset/live-bundle
 If `kubectl apply --server-side --dry-run=server` reports field ownership conflicts in a live development cluster, rerun with:
 
 ```sh
-kubectl apply --server-side --dry-run=server --force-conflicts -f /tmp/k1s-operator-microk8s-dev-a.yaml
+kubectl apply --server-side --dry-run=server --force-conflicts -f /tmp/k1s-operator-default.yaml
 ```
 
 This verifies schema validity without changing live resources.
@@ -35,7 +35,7 @@ Symptoms:
 Fix:
 
 ```sh
-kubectl -n k1s-operator-system get secret k1s-dev-a-operator -o jsonpath='{.data.controllerWriteToken}' >/dev/null
+kubectl -n k1s-operator-system get secret k1s-edge-a-operator -o jsonpath='{.data.controllerWriteToken}' >/dev/null
 ```
 
 Then recreate the Secret with `controllerWriteToken` if mutation CRDs are expected to work.
@@ -51,7 +51,7 @@ spec.image Field required
 
 Cause: the running k1s controller image does not support inference manifests on `/apply`.
 
-Fix: roll k1s-dev-a to a k1s controller build that includes the inference API routes, then requeue or update the CR.
+Fix: roll the target k1s controller to a build that includes the inference API routes, then requeue or update the CR.
 
 ## InferenceCell localPath Validation
 
@@ -91,8 +91,8 @@ The operator retries advertised leader URLs and then falls back to the configure
 Commands:
 
 ```sh
-kubectl -n k1s-dev-a get pods -l app.kubernetes.io/component=controller -o wide
-kubectl -n k1s-dev-a logs deploy/k1s-dev-a-k1s-core-ha-controller -c controller --tail=120
+kubectl -n k1s-system get pods -l app.kubernetes.io/component=controller -o wide
+kubectl -n k1s-system logs deploy/k1s-controller -c controller --tail=120
 kubectl -n k1s-operator-system logs deploy/k1s-operator-controller-manager --tail=120
 ```
 
@@ -101,9 +101,9 @@ kubectl -n k1s-operator-system logs deploy/k1s-operator-controller-manager --tai
 Check the proxy Service and EndpointSlices:
 
 ```sh
-kubectl -n k1s-dev-a get svc k1s-dev-a-k1s-core-ha-edge-proxy
-kubectl -n k1s-dev-a get endpointslice -l kubernetes.io/service-name=k1s-dev-a-k1s-core-ha-edge-proxy -o wide
-kubectl -n k1s-operator-system describe k1sexposure/live-standard
+kubectl -n k1s-system get svc k1s-edge-proxy
+kubectl -n k1s-system get endpointslice -l kubernetes.io/service-name=k1s-edge-proxy -o wide
+kubectl -n k1s-operator-system describe k1sexposure/example
 ```
 
 If ingress is disabled, `K1sExposure` can still be Ready when Service and EndpointSlice are reconciled.
