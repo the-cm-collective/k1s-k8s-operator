@@ -14,6 +14,8 @@ The default manifests install namespace-scoped RBAC:
 
 The manager watches the namespace from `WATCH_NAMESPACE`. In the default manifest this is populated from the pod namespace.
 
+The controller pod also installs a default ingress-deny NetworkPolicy and binds metrics to `127.0.0.1:8080`. Clusters that scrape controller metrics should add an explicit metrics exposure path and matching NetworkPolicy instead of relying on the default pod network.
+
 ## Token Separation
 
 Use separate keys for read and write credentials:
@@ -25,6 +27,17 @@ Use separate keys for read and write credentials:
 | `ca.crt` | optional private CA bundle for HTTPS controller URLs |
 
 Read-only installs should omit `controllerWriteToken` and only grant user RBAC to read-only resources.
+
+## K1sResourceSet Kind Policy
+
+`K1sResourceSet` has two policy layers:
+
+- the operator cap from `--resourceset-allowed-kinds` / `RESOURCESET_ALLOWED_KINDS`;
+- the per-resource `spec.allowedKinds` list.
+
+The per-resource list can only narrow the operator cap. A tenant cannot create a `K1sResourceSet` that widens the operator's configured kind set. The public default cap is `Deployment,InferenceCell,InferenceCellSet`.
+
+For production multi-tenant installs, grant `k1sresourcesets` write access only to users that are allowed to manage every kind in the operator cap, or narrow the manager Deployment's `RESOURCESET_ALLOWED_KINDS` value for that installation.
 
 ## Kubernetes User RBAC
 

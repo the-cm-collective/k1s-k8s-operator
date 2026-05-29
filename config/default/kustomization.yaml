@@ -9,4 +9,4 @@ resources:
 images:
 - name: controller
   newName: ghcr.io/k1s-project/k1s-operator
-  newTag: dev
+  newTag: v0.1.0-dev

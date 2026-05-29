@@ -1,18 +1,15 @@
 apiVersion: operator.k1s.io/v1alpha1
 kind: K1sCluster
 metadata:
-  name: dev-a
+  name: edge-a
   namespace: k1s-operator-system
 spec:
   controller:
-    url: http://k1s-dev-a-k1s-core-ha-controller.k1s-dev-a.svc:9108
+    url: https://k1s-controller.k1s-system.svc:9108
   apishim:
-    url: https://k1s-dev-a-k1s-core-ha-apishim.k1s-dev-a.svc:8445
-  bootstrapConfigMapRef:
-    name: k1s-dev-a-k1s-core-ha-bootstrap
-    namespace: k1s-dev-a
+    url: https://k1s-apishim.k1s-system.svc:8445
   authSecretRef:
-    name: k1s-dev-a-operator
+    name: k1s-edge-a-operator
     namespace: k1s-operator-system
     controllerReadTokenKey: controllerReadToken
     controllerWriteTokenKey: controllerWriteToken
@@ -20,7 +17,7 @@ spec:
   proxy:
     mode: Service
     serviceRef:
-      name: k1s-dev-a-k1s-core-ha-edge-proxy
-      namespace: k1s-dev-a
+      name: k1s-edge-proxy
+      namespace: k1s-system
       port: 10080
   pollIntervalSeconds: 15

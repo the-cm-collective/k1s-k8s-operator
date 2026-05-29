@@ -2,6 +2,8 @@
 
 `k1s-operator` lets Kubernetes users consume selected k1s capabilities through Kubernetes-native APIs. It does not make k1s nodes schedulable Kubernetes nodes. Kubernetes workloads create and observe custom resources; the operator holds scoped k1s credentials and performs the k1s-side CRUD and discovery.
 
+The project is pre-1.0 early development. Public defaults are intentionally conservative: namespace-scoped RBAC, localhost-bound metrics, non-root distroless runtime, a default ingress-deny NetworkPolicy for the controller pod, split read/write k1s tokens, and an operator-level cap on the k1s resource kinds that `K1sResourceSet` may manage.
+
 The operator supports both standard service workflows and AI/ML workflows:
 
 - standard k1s `Deployment` manifests through `K1sApp` and `K1sResourceSet`;
@@ -65,6 +67,8 @@ kubectl apply --server-side -f /tmp/k1s-operator-microk8s-dev-a.yaml
 ```
 
 The operator expects a namespace-local Secret with separate read and write token keys when mutation CRDs are used. See [docs/installation.md](docs/installation.md) and [docs/security-rbac.md](docs/security-rbac.md).
+
+Production installs should use HTTPS k1s controller URLs with a `ca.crt` bundle or public trust chain, versioned or digest-pinned operator images, Kubernetes RBAC for tenant access to CRDs, and scoped k1s tokens held only in the operator namespace. Local HTTP examples are documented only for controlled development labs.
 
 ## Documentation
 

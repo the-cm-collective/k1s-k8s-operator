@@ -5,11 +5,11 @@ metadata:
   namespace: k1s-operator-system
 spec:
   clusterRef:
-    name: dev-a
+    name: edge-a
   appRef:
     namespace: default
     name: echo
-  host: echo.apps.k1s-dev-a.core.home.arpa
+  host: echo.apps.edge-a.core.home.arpa
   path: /
   service:
     name: echo-k1s
