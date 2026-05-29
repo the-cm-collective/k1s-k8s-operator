@@ -45,11 +45,13 @@ spec:
                     type: string
                   replicas:
                     format: int32
+                    minimum: 1
                     type: integer
                 type: object
               clusterRef:
                 properties:
                   name:
+                    minLength: 1
                     type: string
                   namespace:
                     type: string
@@ -57,12 +59,18 @@ spec:
                 - name
                 type: object
               deletePolicy:
+                enum:
+                - Delete
+                - Orphan
                 type: string
               executor:
                 properties:
                   dtype:
                     type: string
                   fallbackMode:
+                    enum:
+                    - strict
+                    - best_effort
                     type: string
                   launcherImage:
                     type: string
@@ -73,16 +81,25 @@ spec:
                   runtimeClassName:
                     type: string
                   type:
+                    enum:
+                    - ray
+                    - mp
                     type: string
                 type: object
               fabric:
                 properties:
                   mode:
+                    enum:
+                    - lan_direct
                     type: string
                   policyMode:
+                    enum:
+                    - strict_membership
+                    - best_effort
                     type: string
                   ttlSeconds:
                     format: int32
+                    minimum: 1
                     type: integer
                 type: object
               members:
@@ -90,6 +107,7 @@ spec:
                   properties:
                     gpuCount:
                       format: int32
+                      minimum: 1
                       type: integer
                     nodeId:
                       type: string
@@ -102,6 +120,7 @@ spec:
                   localPath:
                     type: string
                   modelId:
+                    minLength: 1
                     type: string
                 required:
                 - modelId
@@ -110,9 +129,11 @@ spec:
                 properties:
                   pp:
                     format: int32
+                    minimum: 1
                     type: integer
                   tp:
                     format: int32
+                    minimum: 1
                     type: integer
                 type: object
             required:
@@ -197,6 +218,8 @@ spec:
                 type: string
               ready:
                 type: boolean
+            required:
+            - ready
             type: object
         type: object
     served: true

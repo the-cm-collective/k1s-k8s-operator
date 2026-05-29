@@ -42,6 +42,7 @@ spec:
               appRef:
                 properties:
                   name:
+                    minLength: 1
                     type: string
                   namespace:
                     type: string
@@ -51,6 +52,7 @@ spec:
               clusterRef:
                 properties:
                   name:
+                    minLength: 1
                     type: string
                   namespace:
                     type: string
@@ -82,12 +84,48 @@ spec:
                     type: string
                   port:
                     format: int32
+                    maximum: 65535
+                    minimum: 1
                     type: integer
+                type: object
+              trafficProbe:
+                properties:
+                  enabled:
+                    type: boolean
+                  expectedStatus:
+                    pattern: ^[1-5][0-9][0-9](-[1-5][0-9][0-9])?$
+                    type: string
+                  path:
+                    type: string
+                  port:
+                    format: int32
+                    maximum: 65535
+                    minimum: 1
+                    type: integer
+                  scheme:
+                    enum:
+                    - HTTP
+                    - HTTPS
+                    type: string
+                  timeoutSeconds:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  type:
+                    enum:
+                    - HTTP
+                    - TCP
+                    type: string
                 type: object
             required:
             - appRef
             - clusterRef
             type: object
+            x-kubernetes-validations:
+            - message: host is required when ingress is enabled
+              rule: '!has(self.ingress) ? (has(self.host) && size(self.host) > 0)
+                : ((!has(self.ingress.enabled) || self.ingress.enabled) ? (has(self.host)
+                && size(self.host) > 0) : true)'
           status:
             properties:
               appReady:
@@ -163,6 +201,9 @@ spec:
                 type: integer
               serviceName:
                 type: string
+            required:
+            - appReady
+            - proxyEndpointCount
             type: object
         type: object
     served: true

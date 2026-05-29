@@ -46,6 +46,7 @@ spec:
               clusterRef:
                 properties:
                   name:
+                    minLength: 1
                     type: string
                   namespace:
                     type: string
@@ -53,6 +54,9 @@ spec:
                 - name
                 type: object
               deletePolicy:
+                enum:
+                - Delete
+                - Orphan
                 type: string
               manifests:
                 items:
@@ -133,6 +137,9 @@ spec:
                 type: integer
               ready:
                 type: boolean
+            required:
+            - applied
+            - ready
             type: object
         type: object
     served: true

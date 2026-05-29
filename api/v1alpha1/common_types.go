@@ -6,6 +6,7 @@ import (
 )
 
 type NamespacedNameRef struct {
+	// +kubebuilder:validation:MinLength=1
 	Name      string `json:"name"`
 	Namespace string `json:"namespace,omitempty"`
 }
@@ -18,10 +19,12 @@ func (r NamespacedNameRef) NamespaceOr(defaultNamespace string) string {
 }
 
 type K1sEndpointSpec struct {
+	// +kubebuilder:validation:Pattern=`^https?://`
 	URL string `json:"url"`
 }
 
 type K1sAuthSecretRef struct {
+	// +kubebuilder:validation:MinLength=1
 	Name                    string `json:"name"`
 	Namespace               string `json:"namespace,omitempty"`
 	ControllerReadTokenKey  string `json:"controllerReadTokenKey,omitempty"`
@@ -39,6 +42,7 @@ func (r K1sAuthSecretRef) NamespaceOr(defaultNamespace string) string {
 }
 
 type K1sAppRef struct {
+	// +kubebuilder:validation:MinLength=1
 	Name      string `json:"name"`
 	Namespace string `json:"namespace,omitempty"`
 }
@@ -71,6 +75,7 @@ const (
 	ConditionProxyEndpointsReady = "ProxyEndpointsReady"
 	ConditionResourcesApplied    = "ResourcesApplied"
 	ConditionIngressReady        = "IngressReady"
+	ConditionTrafficReady        = "TrafficReady"
 	ConditionAccepted            = "Accepted"
 	ConditionApplied             = "Applied"
 	ConditionPolicyAllowed       = "PolicyAllowed"

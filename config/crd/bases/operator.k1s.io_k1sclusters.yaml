@@ -42,6 +42,7 @@ spec:
               apishim:
                 properties:
                   url:
+                    pattern: ^https?://
                     type: string
                 required:
                 - url
@@ -59,6 +60,7 @@ spec:
                   controllerWriteTokenKey:
                     type: string
                   name:
+                    minLength: 1
                     type: string
                   namespace:
                     type: string
@@ -68,6 +70,7 @@ spec:
               bootstrapConfigMapRef:
                 properties:
                   name:
+                    minLength: 1
                     type: string
                   namespace:
                     type: string
@@ -77,12 +80,14 @@ spec:
               controller:
                 properties:
                   url:
+                    pattern: ^https?://
                     type: string
                 required:
                 - url
                 type: object
               pollIntervalSeconds:
                 format: int32
+                minimum: 1
                 type: integer
               proxy:
                 properties:
@@ -96,20 +101,28 @@ spec:
                         type: string
                       port:
                         format: int32
+                        maximum: 65535
+                        minimum: 1
                         type: integer
                     required:
                     - port
                     type: object
                   mode:
+                    enum:
+                    - Service
+                    - External
                     type: string
                   serviceRef:
                     properties:
                       name:
+                        minLength: 1
                         type: string
                       namespace:
                         type: string
                       port:
                         format: int32
+                        maximum: 65535
+                        minimum: 1
                         type: integer
                     required:
                     - name
@@ -118,6 +131,19 @@ spec:
                 required:
                 - mode
                 type: object
+                x-kubernetes-validations:
+                - message: proxy.serviceRef is required and proxy.external must be
+                    omitted when proxy.mode=Service
+                  rule: 'self.mode == ''Service'' ? has(self.serviceRef) && !has(self.external)
+                    : true'
+                - message: proxy.external is required and proxy.serviceRef must be
+                    omitted when proxy.mode=External
+                  rule: 'self.mode == ''External'' ? has(self.external) && !has(self.serviceRef)
+                    : true'
+                - message: proxy.external must include addresses or dnsName when proxy.mode=External
+                  rule: 'self.mode == ''External'' && has(self.external) ? (has(self.external.addresses)
+                    && size(self.external.addresses) > 0) || (has(self.external.dnsName)
+                    && size(self.external.dnsName) > 0) : true'
             required:
             - controller
             - proxy
@@ -195,6 +221,10 @@ spec:
                   total:
                     format: int32
                     type: integer
+                required:
+                - ready
+                - stale
+                - total
                 type: object
               observedGeneration:
                 format: int64
@@ -205,6 +235,10 @@ spec:
                 type: string
               wildcardAppsDomain:
                 type: string
+            required:
+            - apishimAvailable
+            - controllerAvailable
+            - proxyReady
             type: object
         type: object
     served: true
