@@ -111,6 +111,10 @@ Production installs should use HTTPS k1s controller URLs with a `ca.crt` bundle 
 - [Troubleshooting guide](docs/troubleshooting.md)
 - [Implementation plan](PLAN.md)
 
+## License
+
+Keleustes Operator is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
+
 ## Validation Status
 
 The current checkpoint has passed:
